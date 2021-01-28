@@ -1,13 +1,18 @@
+use crate::{
+    address_range::{self, AddressRange},
+    Opts,
+};
 use assert_into::AssertInto;
-use std::{collections::HashMap, error::Error, io::Read, mem};
+use std::{cmp::min, collections::HashMap, error::Error, io::Read, mem};
 use zerocopy::{AsBytes, FromBytes};
-
-use crate::{address_range::AddressRange, page_fragment::PageFragment};
 
 const ELF_MAGIC: u32 = 0x464c457f;
 const EM_ARM: u16 = 0x28;
 const EF_ARM_ABI_FLOAT_HARD: u32 = 0x00000400;
 const PT_LOAD: u32 = 0x00000001;
+
+const LOG2_PAGE_SIZE: u32 = 8;
+const PAGE_SIZE: u32 = 1 << LOG2_PAGE_SIZE;
 
 #[repr(packed)]
 #[derive(AsBytes, Copy, Clone, Default, Debug, FromBytes)]
@@ -41,7 +46,7 @@ pub struct Elf32Header {
 }
 
 #[repr(packed)]
-#[derive(AsBytes, Copy, Clone, Default, Debug)]
+#[derive(AsBytes, Copy, Clone, Default, Debug, FromBytes)]
 pub struct Elf32PhEntry {
     pub typ: u32,
     pub offset: u32,
@@ -53,7 +58,9 @@ pub struct Elf32PhEntry {
     pub align: u32,
 }
 
-pub fn read_and_check_elf32_header(input: &mut impl Read) -> Result<Elf32Header, Box<dyn Error>> {
+pub(crate) fn read_and_check_elf32_header(
+    input: &mut impl Read,
+) -> Result<Elf32Header, Box<dyn Error>> {
     let mut eh = Elf32Header::default();
 
     input.read_exact(eh.as_bytes_mut())?;
@@ -83,70 +90,133 @@ pub fn read_and_check_elf32_header(input: &mut impl Read) -> Result<Elf32Header,
     Ok(eh)
 }
 
-pub fn read_and_check_elf32_ph_entries(
+fn check_address_range(
+    opts: &Opts,
+    valid_ranges: &[AddressRange],
+    addr: u32,
+    vaddr: u32,
+    size: u32,
+    uninitialized: bool,
+) -> Result<AddressRange, Box<dyn Error>> {
+    for range in valid_ranges {
+        if range.from <= addr && range.to >= addr + size {
+            if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
+                return Err("ELF contains memory contents for uninitialized memory".into());
+            }
+            if opts.verbose {
+                println!(
+                    "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
+                    if uninitialized {
+                        "Uninitialized"
+                    } else {
+                        "Mapped"
+                    },
+                    addr,
+                    addr + size,
+                    vaddr,
+                    vaddr + size
+                );
+            }
+            return Ok(*range);
+        }
+    }
+    Err(format!(
+        "Memory segment {:#08x}->{:#08x} is outside of valid address range for device",
+        addr,
+        addr + size
+    )
+    .into())
+}
+
+pub struct PageFragment {
+    pub file_offset: u32,
+    pub page_offset: u32,
+    pub bytes: u32,
+}
+
+pub(crate) fn read_and_check_elf32_ph_entries(
+    opts: &Opts,
     input: &mut impl Read,
     eh: &Elf32Header,
     valid_ranges: &[AddressRange],
 ) -> Result<HashMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
-    let res = HashMap::new();
+    let mut pages = HashMap::<u32, Vec<PageFragment>>::new();
 
-    Ok(res)
-}
-
-/*int read_and_check_elf32_ph_entries(FILE *in, const elf32_header &eh, const address_ranges& valid_ranges, std::map<uint32_t, std::vector<page_fragment>>& pages) {
-    if (eh.ph_entry_size != sizeof(elf32_ph_entry)) {
-        return fail(ERROR_FORMAT, "Invalid ELF32 program header");
+    if eh.ph_entry_size != mem::size_of::<Elf32PhEntry>().assert_into() {
+        return Err("Invalid ELF32 program header".into());
     }
-    if (eh.ph_num) {
-        std::vector<elf32_ph_entry> entries(eh.ph_num);
-        if (eh.ph_num != fread(&entries[0], sizeof(struct elf32_ph_entry), eh.ph_num, in)) {
-            return fail_read_error();
-        }
-        for(uint i=0;i<eh.ph_num;i++) {
-            elf32_ph_entry& entry = entries[i];
-            if (entry.type == PT_LOAD && entry.memsz) {
-                address_range ar;
-                int rc;
-                uint mapped_size = std::min(entry.filez, entry.memsz);
-                if (mapped_size) {
-                    rc = check_address_range(valid_ranges, entry.paddr, entry.vaddr, mapped_size, false, ar);
-                    if (rc) return rc;
+
+    if eh.ph_num > 0 {
+        let mut entries = Vec::<Elf32PhEntry>::new();
+        entries.resize_with(eh.ph_num.assert_into(), Default::default);
+
+        input.read_exact(entries.as_mut_slice().as_bytes_mut())?;
+
+        for entry in &entries {
+            if entry.typ == PT_LOAD && entry.memsz > 0 {
+                let mapped_size = min(entry.filez, entry.memsz);
+
+                if mapped_size > 0 {
+                    let ar = check_address_range(
+                        opts,
+                        valid_ranges,
+                        entry.paddr,
+                        entry.vaddr,
+                        mapped_size,
+                        false,
+                    )?;
+
                     // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
-                    if (ar.type != address_range::type::CONTENTS) {
-                        if (verbose) printf("  ignored\n");
+                    if ar.typ != address_range::AddressRangeType::Contents {
+                        if opts.verbose {
+                            println!("ignored");
+                        }
                         continue;
                     }
-                    uint addr = entry.paddr;
-                    uint remaining = mapped_size;
-                    uint file_offset = entry.offset;
-                    while (remaining) {
-                        uint off = addr & (PAGE_SIZE - 1);
-                        uint len = std::min(remaining, PAGE_SIZE - off);
-                        auto &fragments = pages[addr - off]; // list of fragments
+                    let mut addr = entry.paddr;
+                    let mut remaining = mapped_size;
+                    let mut file_offset = entry.offset;
+                    while remaining > 0 {
+                        let off = addr & (PAGE_SIZE - 1);
+                        let len = min(remaining, PAGE_SIZE - off);
+
+                        // list of fragments
+                        let fragments = pages.entry(addr - off).or_default();
+
                         // note if filesz is zero, we want zero init which is handled because the
                         // statement above creates an empty page fragment list
                         // check overlap with any existing fragments
-                        for (const auto &fragment : fragments) {
-                            if ((off < fragment.page_offset + fragment.bytes) !=
-                                ((off + len) <= fragment.page_offset)) {
-                                fail(ERROR_FORMAT, "In memory segments overlap");
+                        for fragment in fragments.iter() {
+                            if (off < fragment.page_offset + fragment.bytes)
+                                != ((off + len) <= fragment.page_offset)
+                            {
+                                return Err("In memory segments overlap".into());
                             }
                         }
-                        fragments.push_back(
-                                page_fragment{file_offset,off,len});
+                        fragments.push(PageFragment {
+                            file_offset,
+                            page_offset: off,
+                            bytes: len,
+                        });
                         addr += len;
                         file_offset += len;
                         remaining -= len;
                     }
                 }
-                if (entry.memsz > entry.filez) {
+                if entry.memsz > entry.filez {
                     // we have some uninitialized data too
-                    rc = check_address_range(valid_ranges, entry.paddr + entry.filez, entry.vaddr + entry.filez, entry.memsz - entry.filez, true,
-                                             ar);
-                    if (rc) return rc;
+                    check_address_range(
+                        opts,
+                        valid_ranges,
+                        entry.paddr + entry.filez,
+                        entry.vaddr + entry.filez,
+                        entry.memsz - entry.filez,
+                        true,
+                    )?;
                 }
             }
         }
     }
-    return 0;
-}*/
+
+    Ok(pages)
+}

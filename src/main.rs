@@ -10,7 +10,6 @@ use std::{
 
 mod address_range;
 mod elf;
-mod page_fragment;
 
 #[derive(Clap)]
 #[clap(version = "1.0", author = "Jonathan Nilsson")]
@@ -59,7 +58,7 @@ fn elf2uf2(
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let pages = read_and_check_elf32_ph_entries(&mut input, &eh, &valid_ranges)?;
+    let pages = read_and_check_elf32_ph_entries(opts, &mut input, &eh, &valid_ranges)?;
 
     Ok(())
 }
@@ -72,7 +71,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if let Err(err) = elf2uf2(&opts, input, output) {
         println!("{}", err);
-        fs::remove_file(opts.output_path());
+        fs::remove_file(opts.output_path())?;
     }
 
     Ok(())

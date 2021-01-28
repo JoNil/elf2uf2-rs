@@ -1,3 +1,4 @@
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AddressRangeType {
     /// May have contents
     Contents,
@@ -7,10 +8,11 @@ pub enum AddressRangeType {
     Ignore,
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct AddressRange {
-    typ: AddressRangeType,
-    to: u32,
-    from: u32,
+    pub typ: AddressRangeType,
+    pub to: u32,
+    pub from: u32,
 }
 
 impl AddressRange {
