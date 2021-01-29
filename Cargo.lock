@@ -69,10 +69,11 @@ dependencies = [
 
 [[package]]
 name = "elf2uf2-rs"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "assert_into",
  "clap",
+ "once_cell",
  "static_assertions",
  "zerocopy",
 ]
@@ -122,6 +123,12 @@ name = "libc"
 version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7eb0c4e9c72ee9d69b767adebc5f4788462a3b45624acd919475c92597bcaf4f"
+
+[[package]]
+name = "once_cell"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13bd41f508810a131401606d54ac32a467c97172d74ba7662562ebba5ad07fa0"
 
 [[package]]
 name = "os_str_bytes"

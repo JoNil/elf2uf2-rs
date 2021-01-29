@@ -97,7 +97,6 @@ pub(crate) fn read_and_check_elf32_header(
 }
 
 fn check_address_range(
-    opts: &Opts,
     valid_ranges: &[AddressRange],
     addr: u32,
     vaddr: u32,
@@ -109,7 +108,7 @@ fn check_address_range(
             if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
                 return Err("ELF contains memory contents for uninitialized memory".into());
             }
-            if opts.verbose {
+            if Opts::global().verbose {
                 println!(
                     "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
                     if uninitialized {
@@ -142,7 +141,6 @@ pub struct PageFragment {
 }
 
 pub(crate) fn read_and_check_elf32_ph_entries(
-    opts: &Opts,
     input: &mut impl Read,
     eh: &Elf32Header,
     valid_ranges: &[AddressRange],
@@ -165,7 +163,6 @@ pub(crate) fn read_and_check_elf32_ph_entries(
 
                 if mapped_size > 0 {
                     let ar = check_address_range(
-                        opts,
                         valid_ranges,
                         entry.paddr,
                         entry.vaddr,
@@ -175,7 +172,7 @@ pub(crate) fn read_and_check_elf32_ph_entries(
 
                     // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
                     if ar.typ != address_range::AddressRangeType::Contents {
-                        if opts.verbose {
+                        if Opts::global().verbose {
                             println!("ignored");
                         }
                         continue;
@@ -213,7 +210,6 @@ pub(crate) fn read_and_check_elf32_ph_entries(
                 if entry.memsz > entry.filez {
                     // we have some uninitialized data too
                     check_address_range(
-                        opts,
                         valid_ranges,
                         entry.paddr + entry.filez,
                         entry.vaddr + entry.filez,

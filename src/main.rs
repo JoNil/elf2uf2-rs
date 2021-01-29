@@ -2,6 +2,7 @@ use address_range::{MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_
 use assert_into::AssertInto;
 use clap::Clap;
 use elf::{read_and_check_elf32_ph_entries, realize_page, PAGE_SIZE};
+use once_cell::sync::OnceCell;
 use static_assertions::const_assert;
 use std::{
     error::Error,
@@ -19,7 +20,7 @@ mod address_range;
 mod elf;
 mod uf2;
 
-#[derive(Clap)]
+#[derive(Debug, Clap)]
 #[clap(version = "1.0", author = "Jonathan Nilsson")]
 struct Opts {
     /// Verbose
@@ -41,18 +42,20 @@ impl Opts {
             Path::new(&self.input).with_extension("uf2")
         }
     }
+
+    fn global() -> &'static Opts {
+        OPTS.get().expect("Opts is not initialized")
+    }
 }
 
-fn elf2uf2(
-    opts: &Opts,
-    mut input: impl Read + Seek,
-    mut output: impl Write,
-) -> Result<(), Box<dyn Error>> {
+static OPTS: OnceCell<Opts> = OnceCell::new();
+
+fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
     let eh = elf::read_and_check_elf32_header(&mut input)?;
 
     let ram_style = 0x2 == eh.entry >> 28;
 
-    if opts.verbose {
+    if Opts::global().verbose {
         if ram_style {
             println!("Detected RAM binary");
         } else {
@@ -66,7 +69,7 @@ fn elf2uf2(
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let pages = read_and_check_elf32_ph_entries(opts, &mut input, &eh, &valid_ranges)?;
+    let pages = read_and_check_elf32_ph_entries(&mut input, &eh, &valid_ranges)?;
 
     if pages.is_empty() {
         return Err("The input file has no memory pages".into());
@@ -106,7 +109,7 @@ fn elf2uf2(
         block_header.target_addr = target_addr;
         block_header.block_no = page_num.assert_into();
 
-        if opts.verbose {
+        if Opts::global().verbose {
             println!(
                 "Page {} / {} {:#08x}",
                 block_header.block_no as u32,
@@ -128,14 +131,14 @@ fn elf2uf2(
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let opts: Opts = Opts::parse();
+    OPTS.set(Opts::parse()).unwrap();
 
-    let input = BufReader::new(File::open(&opts.input)?);
-    let output = File::create(opts.output_path())?;
+    let input = BufReader::new(File::open(&Opts::global().input)?);
+    let output = File::create(Opts::global().output_path())?;
 
-    if let Err(err) = elf2uf2(&opts, input, output) {
+    if let Err(err) = elf2uf2(input, output) {
         println!("{}", err);
-        fs::remove_file(opts.output_path())?;
+        fs::remove_file(Opts::global().output_path())?;
     }
 
     Ok(())
