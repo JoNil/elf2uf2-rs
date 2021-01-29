@@ -17,8 +17,7 @@ pub const RP2040_FAMILY_ID: u32 = 0xe48bff56;
 
 #[repr(packed)]
 #[derive(AsBytes, FromBytes)]
-pub struct Uf2Block {
-    // 32 byte header
+pub struct Uf2BlockHeader {
     pub magic_start0: u32,
     pub magic_start1: u32,
     pub flags: u32,
@@ -27,8 +26,21 @@ pub struct Uf2Block {
     pub block_no: u32,
     pub num_blocks: u32,
     pub file_size: u32, // or familyID
-    pub data: [u8; 476],
+}
+
+pub type Uf2BlockData = [u8; 476];
+
+#[repr(packed)]
+#[derive(AsBytes, FromBytes)]
+pub struct Uf2BlockFooter {
     pub magic_end: u32,
 }
 
-const_assert!(mem::size_of::<Uf2Block>() == 512);
+const_assert!(mem::size_of::<Uf2BlockHeader>() == 32);
+const_assert!(mem::size_of::<Uf2BlockFooter>() == 4);
+const_assert!(
+    mem::size_of::<Uf2BlockHeader>()
+        + mem::size_of::<Uf2BlockData>()
+        + mem::size_of::<Uf2BlockFooter>()
+        == 512
+);

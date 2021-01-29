@@ -14,4 +14,4 @@ repository = "https://github.com/JoNil/elf2uf2-rs"
 assert_into = "1.1"
 clap = "3.0.0-beta.2"
 static_assertions = "1"
-zerocopy = { git = "https://github.com/JoNil/zerocopy.git" }
+zerocopy = "0.3"

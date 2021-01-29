@@ -288,7 +288,8 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 [[package]]
 name = "zerocopy"
 version = "0.3.0"
-source = "git+https://github.com/JoNil/zerocopy.git#2f4751b5f4589d8fc004e88cd7c606dd48bc75db"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6580539ad917b7c026220c4b3f2c08d52ce54d6ce0dc491e66002e35388fab46"
 dependencies = [
  "byteorder",
  "zerocopy-derive",

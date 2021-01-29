@@ -10,8 +10,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use uf2::{
-    Uf2Block, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT, UF2_MAGIC_END, UF2_MAGIC_START0,
-    UF2_MAGIC_START1,
+    Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT,
+    UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
 };
 use zerocopy::AsBytes;
 
@@ -85,7 +85,7 @@ fn elf2uf2(
         // currently don't require this as entry point is now at the start, we don't know where reset vector is
     }
 
-    let mut block = Uf2Block {
+    let mut block_header = Uf2BlockHeader {
         magic_start0: UF2_MAGIC_START0,
         magic_start1: UF2_MAGIC_START1,
         flags: UF2_FLAG_FAMILY_ID_PRESENT,
@@ -94,26 +94,34 @@ fn elf2uf2(
         block_no: 0,
         num_blocks: pages.len().assert_into(),
         file_size: RP2040_FAMILY_ID,
-        data: [0; 476],
+    };
+
+    let mut block_data: Uf2BlockData = [0; 476];
+
+    let block_footer = Uf2BlockFooter {
         magic_end: UF2_MAGIC_END,
     };
 
     for (page_num, (target_addr, fragments)) in pages.into_iter().enumerate() {
-        block.target_addr = target_addr;
-        block.block_no = page_num.assert_into();
+        block_header.target_addr = target_addr;
+        block_header.block_no = page_num.assert_into();
 
         if opts.verbose {
             println!(
                 "Page {} / {} {:#08x}",
-                block.block_no as u32, block.num_blocks as u32, block.target_addr as u32
+                block_header.block_no as u32,
+                block_header.num_blocks as u32,
+                block_header.target_addr as u32
             );
         }
 
-        block.data.iter_mut().for_each(|v| *v = 0);
+        block_data.iter_mut().for_each(|v| *v = 0);
 
-        realize_page(&mut input, &fragments, &mut block.data)?;
+        realize_page(&mut input, &fragments, &mut block_data)?;
 
-        output.write_all(block.as_bytes())?;
+        output.write_all(block_header.as_bytes())?;
+        output.write_all(block_data.as_bytes())?;
+        output.write_all(block_footer.as_bytes())?;
     }
 
     Ok(())
