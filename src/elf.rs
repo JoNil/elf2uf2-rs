@@ -3,7 +3,13 @@ use crate::{
     Opts,
 };
 use assert_into::AssertInto;
-use std::{cmp::min, collections::HashMap, error::Error, io::Read, mem};
+use std::{
+    cmp::min,
+    collections::BTreeMap,
+    error::Error,
+    io::{Read, Seek, SeekFrom},
+    mem,
+};
 use zerocopy::{AsBytes, FromBytes};
 
 const ELF_MAGIC: u32 = 0x464c457f;
@@ -11,8 +17,8 @@ const EM_ARM: u16 = 0x28;
 const EF_ARM_ABI_FLOAT_HARD: u32 = 0x00000400;
 const PT_LOAD: u32 = 0x00000001;
 
-const LOG2_PAGE_SIZE: u32 = 8;
-const PAGE_SIZE: u32 = 1 << LOG2_PAGE_SIZE;
+pub const LOG2_PAGE_SIZE: u32 = 8;
+pub const PAGE_SIZE: u32 = 1 << LOG2_PAGE_SIZE;
 
 #[repr(packed)]
 #[derive(AsBytes, Copy, Clone, Default, Debug, FromBytes)]
@@ -128,6 +134,7 @@ fn check_address_range(
     .into())
 }
 
+#[derive(Copy, Clone, Debug, Default)]
 pub struct PageFragment {
     pub file_offset: u32,
     pub page_offset: u32,
@@ -139,8 +146,8 @@ pub(crate) fn read_and_check_elf32_ph_entries(
     input: &mut impl Read,
     eh: &Elf32Header,
     valid_ranges: &[AddressRange],
-) -> Result<HashMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
-    let mut pages = HashMap::<u32, Vec<PageFragment>>::new();
+) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
+    let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
 
     if eh.ph_entry_size != mem::size_of::<Elf32PhEntry>().assert_into() {
         return Err("Invalid ELF32 program header".into());
@@ -219,4 +226,24 @@ pub(crate) fn read_and_check_elf32_ph_entries(
     }
 
     Ok(pages)
+}
+
+pub fn realize_page(
+    input: &mut (impl Read + Seek),
+    fragments: &[PageFragment],
+    buf: &mut [u8],
+) -> Result<(), Box<dyn Error>> {
+    assert!(buf.len() >= PAGE_SIZE.assert_into());
+
+    for frag in fragments {
+        assert!(frag.page_offset < PAGE_SIZE && frag.page_offset + frag.bytes <= PAGE_SIZE);
+
+        input.seek(SeekFrom::Start(frag.file_offset.assert_into()))?;
+
+        input.read_exact(
+            &mut buf[frag.page_offset.assert_into()..(frag.page_offset + frag.bytes).assert_into()],
+        )?;
+    }
+
+    Ok(())
 }

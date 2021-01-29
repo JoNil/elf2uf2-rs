@@ -31,10 +31,10 @@ impl Default for AddressRange {
     }
 }
 
-const MAIN_RAM_START: u32 = 0x20000000;
-const MAIN_RAM_END: u32 = 0x20042000;
-const FLASH_START: u32 = 0x10000000;
-const FLASH_END: u32 = 0x15000000;
+pub const MAIN_RAM_START: u32 = 0x20000000;
+pub const MAIN_RAM_END: u32 = 0x20042000;
+pub const FLASH_START: u32 = 0x10000000;
+pub const FLASH_END: u32 = 0x15000000;
 
 pub const RP2040_ADDRESS_RANGES_FLASH: &[AddressRange] = &[
     AddressRange::new(FLASH_START, FLASH_END, AddressRangeType::Contents),

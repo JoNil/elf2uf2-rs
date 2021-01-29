@@ -9,4 +9,5 @@ edition = "2018"
 [dependencies]
 assert_into = "1.1"
 clap = "3.0.0-beta.2"
-zerocopy = "0.3"
+static_assertions = "1"
+zerocopy = { git = "https://github.com/JoNil/zerocopy.git" }
