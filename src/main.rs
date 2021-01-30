@@ -173,34 +173,36 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let serial_ports_before = serialport::available_ports()?;
 
-    let input = BufReader::new(File::open(&Opts::global().input)?);
+    {
+        let input = BufReader::new(File::open(&Opts::global().input)?);
 
-    let output = if Opts::global().deploy {
-        let sys = sysinfo::System::new_all();
+        let output = if Opts::global().deploy {
+            let sys = sysinfo::System::new_all();
 
-        let mut pico_drive = None;
-        for disk in sys.get_disks() {
-            let mount = disk.get_mount_point();
+            let mut pico_drive = None;
+            for disk in sys.get_disks() {
+                let mount = disk.get_mount_point();
 
-            if mount.join("INFO_UF2.TXT").is_file() {
-                println!("Found pico uf2 disk {}", &mount.to_string_lossy());
-                pico_drive = Some(mount.to_owned());
-                break;
+                if mount.join("INFO_UF2.TXT").is_file() {
+                    println!("Found pico uf2 disk {}", &mount.to_string_lossy());
+                    pico_drive = Some(mount.to_owned());
+                    break;
+                }
             }
-        }
 
-        if let Some(pico_drive) = pico_drive {
-            File::create(pico_drive.join("out.uf2"))?
+            if let Some(pico_drive) = pico_drive {
+                File::create(pico_drive.join("out.uf2"))?
+            } else {
+                return Err("Unable to find mounted pico".into());
+            }
         } else {
-            return Err("Unable to find mounted pico".into());
-        }
-    } else {
-        File::create(Opts::global().output_path())?
-    };
+            File::create(Opts::global().output_path())?
+        };
 
-    if let Err(err) = elf2uf2(input, output) {
-        fs::remove_file(Opts::global().output_path())?;
-        return Err(err);
+        if let Err(err) = elf2uf2(input, output) {
+            fs::remove_file(Opts::global().output_path())?;
+            return Err(err);
+        }
     }
 
     // New line after progress bar
@@ -228,13 +230,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(serial_port_info) = serial_port_info {
         let mut port = serialport::new(&serial_port_info.port_name, 115200)
             .baud_rate(115200)
-            .timeout(Duration::from_millis(10000))
+            .timeout(Duration::from_millis(100))
             .open()?;
 
         let mut serial_buf = [0; 1000];
         loop {
-            let bytes_read = port.read(&mut serial_buf)?;
-            io::stdout().write_all(&serial_buf[..bytes_read])?;
+            match port.read(&mut serial_buf) {
+                Ok(t) => io::stdout().write_all(&serial_buf[..t])?,
+                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+                Err(e) => return Err(e.into()),
+            }
         }
     }
 
