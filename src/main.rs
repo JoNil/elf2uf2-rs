@@ -3,6 +3,7 @@ use assert_into::AssertInto;
 use clap::Clap;
 use elf::{read_and_check_elf32_ph_entries, realize_page, PAGE_SIZE};
 use once_cell::sync::OnceCell;
+use pbr::{ProgressBar, Units};
 use static_assertions::const_assert;
 use std::{
     error::Error,
@@ -10,6 +11,7 @@ use std::{
     io::{BufReader, Read, Seek, Write},
     path::{Path, PathBuf},
 };
+use sysinfo::{DiskExt, SystemExt};
 use uf2::{
     Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT,
     UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
@@ -21,11 +23,15 @@ mod elf;
 mod uf2;
 
 #[derive(Debug, Clap)]
-#[clap(version = "1.0", author = "Jonathan Nilsson")]
+#[clap(version = "1.2", author = "Jonathan Nilsson")]
 struct Opts {
     /// Verbose
     #[clap(short, long)]
     verbose: bool,
+
+    /// Deploy to any connected pico
+    #[clap(short, long)]
+    deploy: bool,
 
     /// Input file
     input: String,
@@ -105,6 +111,16 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         magic_end: UF2_MAGIC_END,
     };
 
+    let mut pb = if !Opts::global().verbose && Opts::global().deploy {
+        Some(ProgressBar::new((pages.len() * 512).assert_into()))
+    } else {
+        None
+    };
+
+    if let Some(pb) = &mut pb {
+        pb.set_units(Units::Bytes);
+    }
+
     for (page_num, (target_addr, fragments)) in pages.into_iter().enumerate() {
         block_header.target_addr = target_addr;
         block_header.block_no = page_num.assert_into();
@@ -125,6 +141,10 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         output.write_all(block_header.as_bytes())?;
         output.write_all(block_data.as_bytes())?;
         output.write_all(block_footer.as_bytes())?;
+
+        if let Some(pb) = &mut pb {
+            pb.add(512);
+        }
     }
 
     Ok(())
@@ -134,11 +154,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     OPTS.set(Opts::parse()).unwrap();
 
     let input = BufReader::new(File::open(&Opts::global().input)?);
-    let output = File::create(Opts::global().output_path())?;
+
+    let output = if Opts::global().deploy {
+        let sys = sysinfo::System::new_all();
+
+        let mut pico_drive = None;
+        for disk in sys.get_disks() {
+            let mount = disk.get_mount_point();
+
+            if mount.join("INFO_UF2.TXT").is_file() {
+                pico_drive = Some(mount.to_owned());
+                break;
+            }
+        }
+
+        if let Some(pico_drive) = pico_drive {
+            File::create(pico_drive.join("out.uf2"))?
+        } else {
+            return Err("Unable to find mounted pico".into());
+        }
+    } else {
+        File::create(Opts::global().output_path())?
+    };
 
     if let Err(err) = elf2uf2(input, output) {
-        println!("{}", err);
         fs::remove_file(Opts::global().output_path())?;
+        return Err(err);
     }
 
     Ok(())
