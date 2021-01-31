@@ -453,8 +453,8 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 
 [[package]]
 name = "serialport"
-version = "4.0.0"
-source = "git+https://gitlab.com/JoNil2/serialport-rs.git#4a86a72f29e5aeeb06859c25c4f8e754787c48ea"
+version = "4.0.1-alpha.0"
+source = "git+https://gitlab.com/JoNil2/serialport-rs.git#e44160bc71a19131b95d41a5ec1d40e7ed291bfd"
 dependencies = [
  "CoreFoundation-sys",
  "IOKit-sys",
