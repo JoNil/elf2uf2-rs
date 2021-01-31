@@ -15,7 +15,7 @@ assert_into = "1.1"
 clap = "3.0.0-beta.2"
 once_cell = "1.5"
 pbr = "1"
-serialport = { git = "https://gitlab.com/JoNil2/serialport-rs.git" }
+serialport = "4"
 static_assertions = "1"
 sysinfo = "0.16.0"
 zerocopy = "0.3"

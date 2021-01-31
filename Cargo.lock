@@ -453,8 +453,9 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 
 [[package]]
 name = "serialport"
-version = "4.0.1-alpha.0"
-source = "git+https://gitlab.com/JoNil2/serialport-rs.git#e44160bc71a19131b95d41a5ec1d40e7ed291bfd"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f37409d980045734250d679750bdf11bd875fec5bb5417dd21bb75d04d31a1"
 dependencies = [
  "CoreFoundation-sys",
  "IOKit-sys",

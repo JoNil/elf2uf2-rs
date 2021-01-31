@@ -4,6 +4,7 @@ use clap::Clap;
 use elf::{read_and_check_elf32_ph_entries, realize_page, PAGE_SIZE};
 use once_cell::sync::OnceCell;
 use pbr::{ProgressBar, Units};
+use serialport::FlowControl;
 use static_assertions::const_assert;
 use std::{
     error::Error,
@@ -230,6 +231,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(serial_port_info) = serial_port_info {
         let mut port = serialport::new(&serial_port_info.port_name, 115200)
             .timeout(Duration::from_millis(100))
+            .flow_control(FlowControl::Hardware)
             .open()?;
 
         let mut serial_buf = [0; 1024];
