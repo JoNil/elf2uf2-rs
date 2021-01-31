@@ -229,7 +229,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if let Some(serial_port_info) = serial_port_info {
         let mut port = serialport::new(&serial_port_info.port_name, 115200)
-            .baud_rate(115200)
             .timeout(Duration::from_millis(100))
             .open()?;
 

@@ -454,8 +454,7 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 [[package]]
 name = "serialport"
 version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f37409d980045734250d679750bdf11bd875fec5bb5417dd21bb75d04d31a1"
+source = "git+https://gitlab.com/JoNil2/serialport-rs.git#4a86a72f29e5aeeb06859c25c4f8e754787c48ea"
 dependencies = [
  "CoreFoundation-sys",
  "IOKit-sys",
@@ -505,9 +504,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.15.11"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd024ccff6b09c6be38d41f168b7f3e132bac86338ee4b24fa485caf601ee158"
+checksum = "4f253bca7bfee7ca5176db56f67802795bf5c4583f2b7f14c0d8d6ec97a712df"
 dependencies = [
  "cc",
  "cfg-if 1.0.0",
