@@ -233,7 +233,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .timeout(Duration::from_millis(100))
             .open()?;
 
-        let mut serial_buf = [0; 1000];
+        let mut serial_buf = [0; 1024];
         loop {
             match port.read(&mut serial_buf) {
                 Ok(t) => io::stdout().write_all(&serial_buf[..t])?,
