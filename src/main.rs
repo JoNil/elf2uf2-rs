@@ -234,6 +234,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             .flow_control(FlowControl::Hardware)
             .open()?;
 
+        port.write_data_terminal_ready(true)?;
+
         let mut serial_buf = [0; 1024];
         loop {
             match port.read(&mut serial_buf) {
