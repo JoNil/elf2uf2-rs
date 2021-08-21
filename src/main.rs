@@ -173,6 +173,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     OPTS.set(Opts::parse()).unwrap();
 
     let serial_ports_before = serialport::available_ports()?;
+    let mut deployed_path = None;
 
     {
         let input = BufReader::new(File::open(&Opts::global().input)?);
@@ -192,7 +193,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             if let Some(pico_drive) = pico_drive {
-                File::create(pico_drive.join("out.uf2"))?
+                deployed_path = Some(pico_drive.join("out.uf2"));
+                File::create(deployed_path.as_ref().unwrap())?
             } else {
                 return Err("Unable to find mounted pico".into());
             }
@@ -201,7 +203,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         if let Err(err) = elf2uf2(input, output) {
-            fs::remove_file(Opts::global().output_path())?;
+            if Opts::global().deploy {
+                fs::remove_file(deployed_path.unwrap())?;
+            } else {
+                fs::remove_file(Opts::global().output_path())?;
+            }
             return Err(err);
         }
     }
