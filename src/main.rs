@@ -78,7 +78,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let pages = read_and_check_elf32_ph_entries(&mut input, &eh, &valid_ranges)?;
+    let pages = read_and_check_elf32_ph_entries(&mut input, &eh, valid_ranges)?;
 
     if pages.is_empty() {
         return Err("The input file has no memory pages".into());
