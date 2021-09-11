@@ -12,10 +12,10 @@ repository = "https://github.com/JoNil/elf2uf2-rs"
 
 [dependencies]
 assert_into = "1.1"
-clap = "3.0.0-beta.2"
+clap = "3.0.0-beta.4"
 once_cell = "1.5"
 pbr = "1"
 serialport = "4"
 static_assertions = "1"
-sysinfo = "0.16"
-zerocopy = "0.3"
+sysinfo = "0.20"
+zerocopy = "0.6"

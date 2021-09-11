@@ -36,6 +36,10 @@ struct Opts {
     #[clap(short, long)]
     deploy: bool,
 
+    /// Connect to serial after deply
+    #[clap(short, long)]
+    serial: bool,
+
     /// Input file
     input: String,
 
@@ -182,8 +186,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let sys = sysinfo::System::new_all();
 
             let mut pico_drive = None;
-            for disk in sys.get_disks() {
-                let mount = disk.get_mount_point();
+            for disk in sys.disks() {
+                let mount = disk.mount_point();
 
                 if mount.join("INFO_UF2.TXT").is_file() {
                     println!("Found pico uf2 disk {}", &mount.to_string_lossy());
@@ -215,39 +219,44 @@ fn main() -> Result<(), Box<dyn Error>> {
     // New line after progress bar
     println!();
 
-    let mut counter = 0;
+    if Opts::global().serial {
+        let mut counter = 0;
 
-    let serial_port_info = 'find_loop: loop {
-        for port in serialport::available_ports()? {
-            if !serial_ports_before.contains(&port) {
-                println!("Found pico serial on {}", &port.port_name);
-                break 'find_loop Some(port);
+        let serial_port_info = 'find_loop: loop {
+            for port in serialport::available_ports()? {
+                if !serial_ports_before.contains(&port) {
+                    println!("Found pico serial on {}", &port.port_name);
+                    break 'find_loop Some(port);
+                }
             }
-        }
 
-        counter += 1;
+            counter += 1;
 
-        if counter == 5 {
-            break None;
-        }
+            if counter == 10 {
+                break None;
+            }
 
-        thread::sleep(Duration::from_millis(200));
-    };
+            thread::sleep(Duration::from_millis(200));
+        };
 
-    if let Some(serial_port_info) = serial_port_info {
-        let mut port = serialport::new(&serial_port_info.port_name, 115200)
-            .timeout(Duration::from_millis(100))
-            .flow_control(FlowControl::Hardware)
-            .open()?;
-
-        port.write_data_terminal_ready(true)?;
-
-        let mut serial_buf = [0; 1024];
-        loop {
-            match port.read(&mut serial_buf) {
-                Ok(t) => io::stdout().write_all(&serial_buf[..t])?,
-                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
-                Err(e) => return Err(e.into()),
+        if let Some(serial_port_info) = serial_port_info {
+            for _ in 0..3 {
+                if let Ok(mut port) = serialport::new(&serial_port_info.port_name, 115200)
+                    .timeout(Duration::from_millis(100))
+                    .flow_control(FlowControl::Hardware)
+                    .open()
+                {
+                    if port.write_data_terminal_ready(true).is_ok() {
+                        let mut serial_buf = [0; 1024];
+                        loop {
+                            match port.read(&mut serial_buf) {
+                                Ok(t) => io::stdout().write_all(&serial_buf[..t])?,
+                                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+                                Err(e) => return Err(e.into()),
+                            }
+                        }
+                    }
+                }
             }
         }
     }

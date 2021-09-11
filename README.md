@@ -4,6 +4,8 @@
 cargo install elf2uf2-rs
 ```
 
-Now supports automatic deployment to a mounted pico with the -d option.
+## Options
+-d automatic deployment to a mounted pico.
+-s open the pico as a serial device after deploy and print serial output.
 
 Original at https://github.com/raspberrypi/pico-sdk/tree/master/tools/elf2uf2
