@@ -26,7 +26,7 @@ mod elf;
 mod uf2;
 
 #[derive(Debug, Clap)]
-#[clap(version = "1.2", author = "Jonathan Nilsson")]
+#[clap(author = "Jonathan Nilsson")]
 struct Opts {
     /// Verbose
     #[clap(short, long)]
@@ -240,7 +240,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         if let Some(serial_port_info) = serial_port_info {
-            for _ in 0..3 {
+            for _ in 0..5 {
                 if let Ok(mut port) = serialport::new(&serial_port_info.port_name, 115200)
                     .timeout(Duration::from_millis(100))
                     .flow_control(FlowControl::Hardware)
@@ -257,6 +257,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
                     }
                 }
+
+                thread::sleep(Duration::from_millis(200));
             }
         }
     }
