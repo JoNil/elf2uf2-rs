@@ -1,6 +1,6 @@
 use address_range::{MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM};
 use assert_into::AssertInto;
-use clap::Clap;
+use clap::Parser;
 use elf::{read_and_check_elf32_ph_entries, realize_page, PAGE_SIZE};
 use once_cell::sync::OnceCell;
 use pbr::{ProgressBar, Units};
@@ -25,7 +25,7 @@ mod address_range;
 mod elf;
 mod uf2;
 
-#[derive(Debug, Clap)]
+#[derive(Debug, Parser)]
 #[clap(author = "Jonathan Nilsson")]
 struct Opts {
     /// Verbose
