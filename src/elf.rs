@@ -206,16 +206,16 @@ pub(crate) fn read_and_check_elf32_ph_entries(
                         file_offset += len;
                         remaining -= len;
                     }
-                }
-                if entry.memsz > entry.filez {
-                    // we have some uninitialized data too
-                    check_address_range(
-                        valid_ranges,
-                        entry.paddr + entry.filez,
-                        entry.vaddr + entry.filez,
-                        entry.memsz - entry.filez,
-                        true,
-                    )?;
+                    if entry.memsz > entry.filez {
+                        // we have some uninitialized data too
+                        check_address_range(
+                            valid_ranges,
+                            entry.paddr + entry.filez,
+                            entry.vaddr + entry.filez,
+                            entry.memsz - entry.filez,
+                            true,
+                        )?;
+                    }
                 }
             }
         }
