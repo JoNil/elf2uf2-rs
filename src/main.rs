@@ -36,7 +36,7 @@ struct Opts {
     #[clap(short, long)]
     deploy: bool,
 
-    /// Connect to serial after deply
+    /// Connect to serial after deploy
     #[clap(short, long)]
     serial: bool,
 
