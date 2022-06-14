@@ -1,7 +1,4 @@
-use crate::{
-    address_range::{self, AddressRange},
-    Opts,
-};
+use crate::address_range::{self, AddressRange};
 use assert_into::AssertInto;
 use std::{
     cmp::min,
@@ -102,13 +99,14 @@ fn check_address_range(
     vaddr: u32,
     size: u32,
     uninitialized: bool,
+    verbose: bool,
 ) -> Result<AddressRange, Box<dyn Error>> {
     for range in valid_ranges {
         if range.from <= addr && range.to >= addr + size {
             if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
                 return Err("ELF contains memory contents for uninitialized memory".into());
             }
-            if Opts::global().verbose {
+            if verbose {
                 println!(
                     "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
                     if uninitialized {
@@ -144,6 +142,7 @@ pub(crate) fn read_and_check_elf32_ph_entries(
     input: &mut impl Read,
     eh: &Elf32Header,
     valid_ranges: &[AddressRange],
+    verbose: bool,
 ) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
     let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
 
@@ -168,11 +167,12 @@ pub(crate) fn read_and_check_elf32_ph_entries(
                         entry.vaddr,
                         mapped_size,
                         false,
+                        verbose,
                     )?;
 
                     // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
                     if ar.typ != address_range::AddressRangeType::Contents {
-                        if Opts::global().verbose {
+                        if verbose {
                             println!("ignored");
                         }
                         continue;
@@ -214,6 +214,7 @@ pub(crate) fn read_and_check_elf32_ph_entries(
                             entry.vaddr + entry.filez,
                             entry.memsz - entry.filez,
                             true,
+                            verbose,
                         )?;
                     }
                 }
