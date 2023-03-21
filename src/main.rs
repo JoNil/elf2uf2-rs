@@ -250,7 +250,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                         let mut serial_buf = [0; 1024];
                         loop {
                             match port.read(&mut serial_buf) {
-                                Ok(t) => io::stdout().write_all(&serial_buf[..t])?,
+                                Ok(t) => {
+                                    io::stdout().write_all(&serial_buf[..t])?;
+                                    io::stdout().flush()?;
+                                }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
                                 Err(e) => return Err(e.into()),
                             }
