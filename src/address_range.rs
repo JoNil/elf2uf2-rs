@@ -31,29 +31,6 @@ impl Default for AddressRange {
     }
 }
 
-pub trait AddressRangesExt {
-    fn range_for(&self, address: u32) -> Option<&AddressRange>;
-
-    fn is_address_initialized(&self, addr: u32) -> bool {
-        let range = if let Some(range) = self.range_for(addr) {
-            range
-        } else {
-            return false;
-        };
-
-        matches!(range.typ, AddressRangeType::Contents)
-    }
-}
-
-impl<T> AddressRangesExt for T
-where
-    T: AsRef<[AddressRange]>,
-{
-    fn range_for(&self, addr: u32) -> Option<&AddressRange> {
-        self.as_ref().iter().find(|r| r.from <= addr && r.to > addr)
-    }
-}
-
 pub const FLASH_SECTOR_ERASE_SIZE: u32 = 4096;
 pub const MAIN_RAM_START: u32 = 0x20000000;
 pub const MAIN_RAM_END: u32 = 0x20042000;

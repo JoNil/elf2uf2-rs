@@ -3,7 +3,7 @@ use address_range::{
 };
 use assert_into::AssertInto;
 use clap::Parser;
-use elf::{check_elf32_ph_entries, is_ram_binary, read_elf32_ph_entries, realize_page, PAGE_SIZE};
+use elf::{realize_page, AddressRangesExt, Elf32Header, PAGE_SIZE};
 use once_cell::sync::OnceCell;
 use pbr::{ProgressBar, Units};
 use serialport::FlowControl;
@@ -69,11 +69,12 @@ impl Opts {
 static OPTS: OnceCell<Opts> = OnceCell::new();
 
 fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
-    let eh = elf::read_and_check_elf32_header(&mut input)?;
+    let eh = Elf32Header::from_read(&mut input)?;
 
-    let entries = read_elf32_ph_entries(&mut input, &eh)?;
+    let entries = eh.read_elf32_ph_entries(&mut input)?;
 
-    let ram_style = is_ram_binary(&eh, &entries)
+    let ram_style = eh
+        .is_ram_binary(&entries)
         .ok_or("entry point is not in mapped part of file".to_string())?;
 
     if Opts::global().verbose {
@@ -90,7 +91,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let mut pages = check_elf32_ph_entries(&entries, valid_ranges)?;
+    let mut pages = valid_ranges.check_elf32_ph_entries(&entries)?;
 
     if pages.is_empty() {
         return Err("The input file has no memory pages".into());
