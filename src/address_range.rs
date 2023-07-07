@@ -31,17 +31,53 @@ impl Default for AddressRange {
     }
 }
 
+pub trait AddressRangesExt {
+    fn range_for(&self, address: u32) -> Option<&AddressRange>;
+
+    fn is_address_initialized(&self, addr: u32) -> bool {
+        let range = if let Some(range) = self.range_for(addr) {
+            range
+        } else {
+            return false;
+        };
+
+        matches!(range.typ, AddressRangeType::Contents)
+    }
+}
+
+impl<T> AddressRangesExt for T
+where
+    T: AsRef<[AddressRange]>,
+{
+    fn range_for(&self, addr: u32) -> Option<&AddressRange> {
+        self.as_ref().iter().find(|r| r.from <= addr && r.to > addr)
+    }
+}
+
+pub const FLASH_SECTOR_ERASE_SIZE: u32 = 4096;
 pub const MAIN_RAM_START: u32 = 0x20000000;
 pub const MAIN_RAM_END: u32 = 0x20042000;
 pub const FLASH_START: u32 = 0x10000000;
 pub const FLASH_END: u32 = 0x15000000;
+pub const XIP_SRAM_START: u32 = 0x15000000;
+pub const XIP_SRAM_END: u32 = 0x15004000;
+pub const MAIN_RAM_BANKED_START: u32 = 0x21000000;
+pub const MAIN_RAM_BANKED_END: u32 = 0x21040000;
+pub const ROM_START: u32 = 0x00000000;
+pub const ROM_END: u32 = 0x00004000;
 
 pub const RP2040_ADDRESS_RANGES_FLASH: &[AddressRange] = &[
     AddressRange::new(FLASH_START, FLASH_END, AddressRangeType::Contents),
     AddressRange::new(MAIN_RAM_START, MAIN_RAM_END, AddressRangeType::NoContents),
+    AddressRange::new(
+        MAIN_RAM_BANKED_START,
+        MAIN_RAM_BANKED_END,
+        AddressRangeType::NoContents,
+    ),
 ];
 
 pub const RP2040_ADDRESS_RANGES_RAM: &[AddressRange] = &[
     AddressRange::new(MAIN_RAM_START, MAIN_RAM_END, AddressRangeType::Contents),
-    AddressRange::new(0x00000000, 0x00002000, AddressRangeType::Ignore), // for now we ignore the bootrom if present
+    AddressRange::new(XIP_SRAM_START, XIP_SRAM_END, AddressRangeType::Contents),
+    AddressRange::new(ROM_START, ROM_END, AddressRangeType::Ignore), // for now we ignore the bootrom if present
 ];

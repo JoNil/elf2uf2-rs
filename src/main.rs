@@ -1,12 +1,15 @@
-use address_range::{MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM};
+use address_range::{
+    FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
+};
 use assert_into::AssertInto;
 use clap::Parser;
-use elf::{read_and_check_elf32_ph_entries, realize_page, PAGE_SIZE};
+use elf::{check_elf32_ph_entries, is_ram_binary, read_elf32_ph_entries, realize_page, PAGE_SIZE};
 use once_cell::sync::OnceCell;
 use pbr::{ProgressBar, Units};
 use serialport::FlowControl;
 use static_assertions::const_assert;
 use std::{
+    collections::HashSet,
     error::Error,
     fs::{self, File},
     io::{self, BufReader, Read, Seek, Write},
@@ -20,6 +23,8 @@ use uf2::{
     UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
 };
 use zerocopy::AsBytes;
+
+use crate::address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START};
 
 mod address_range;
 mod elf;
@@ -66,7 +71,10 @@ static OPTS: OnceCell<Opts> = OnceCell::new();
 fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
     let eh = elf::read_and_check_elf32_header(&mut input)?;
 
-    let ram_style = 0x2 == eh.entry >> 28;
+    let entries = read_elf32_ph_entries(&mut input, &eh)?;
+
+    let ram_style = is_ram_binary(&eh, &entries)
+        .ok_or("entry point is not in mapped part of file".to_string())?;
 
     if Opts::global().verbose {
         if ram_style {
@@ -82,23 +90,67 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let pages = read_and_check_elf32_ph_entries(&mut input, &eh, valid_ranges)?;
+    let mut pages = check_elf32_ph_entries(&entries, valid_ranges)?;
 
     if pages.is_empty() {
         return Err("The input file has no memory pages".into());
     }
 
     if ram_style {
-        let expected_ep = pages.keys().next().unwrap() | 0x1;
-        if eh.entry != expected_ep {
+        let mut expected_ep_main_ram = u32::MAX;
+        let mut expected_ep_xip_sram = u32::MAX;
+
+        pages.iter().map(|(a, _)| *a).for_each(|addr| {
+            if addr >= MAIN_RAM_START && addr <= MAIN_RAM_END {
+                expected_ep_main_ram = expected_ep_main_ram.min(addr) | 0x1;
+            } else if addr >= XIP_SRAM_START && addr < XIP_SRAM_END {
+                expected_ep_xip_sram = expected_ep_xip_sram.min(addr) | 0x1;
+            }
+        });
+
+        let expected_ep = if expected_ep_main_ram != u32::MAX {
+            expected_ep_main_ram
+        } else {
+            expected_ep_xip_sram
+        };
+
+        if expected_ep == expected_ep_xip_sram {
+            return Err("B0/B1 Boot ROM does not support direct entry into XIP_SRAM".into());
+        } else if eh.entry != expected_ep {
             return Err(format!(
-                "A RAM binary should have an entry point at the beginning: {:#08x} (not {:#08x})\n",
+                "A RAM binary should have an entry point at the beginning: {:#08x} (not {:#08x})",
                 expected_ep, eh.entry as u32
             )
             .into());
         }
         const_assert!(0 == (MAIN_RAM_START & (PAGE_SIZE - 1)));
+
+        // TODO: check vector table start up
         // currently don't require this as entry point is now at the start, we don't know where reset vector is
+    } else {
+        // Fill in empty dummy uf2 pages to align the binary to flash sectors (except for the last sector which we don't
+        // need to pad, and choose not to to avoid making all SDK UF2s bigger)
+        // That workaround is required because the bootrom uses the block number for erase sector calculations:
+        // https://github.com/raspberrypi/pico-bootrom/blob/c09c7f08550e8a36fc38dc74f8873b9576de99eb/bootrom/virtual_disk.c#L205
+
+        let touched_sectors: HashSet<u32> = pages
+            .iter()
+            .map(|(addr, _)| addr / FLASH_SECTOR_ERASE_SIZE)
+            .collect();
+
+        let last_page_addr = *pages.last_key_value().unwrap().0;
+        for sector in touched_sectors {
+            let mut page = sector * FLASH_SECTOR_ERASE_SIZE;
+
+            while page < (sector + 1) * FLASH_SECTOR_ERASE_SIZE {
+                if page < last_page_addr {
+                    if !pages.contains_key(&page) {
+                        pages.insert(page, Vec::new());
+                    }
+                }
+                page += PAGE_SIZE;
+            }
+        }
     }
 
     let mut block_header = Uf2BlockHeader {

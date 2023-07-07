@@ -1,5 +1,8 @@
 use crate::{
-    address_range::{self, AddressRange},
+    address_range::{
+        self, AddressRange, AddressRangesExt, RP2040_ADDRESS_RANGES_FLASH,
+        RP2040_ADDRESS_RANGES_RAM,
+    },
     Opts,
 };
 use assert_into::AssertInto;
@@ -106,7 +109,10 @@ fn check_address_range(
     for range in valid_ranges {
         if range.from <= addr && range.to >= addr + size {
             if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
-                return Err("ELF contains memory contents for uninitialized memory".into());
+                return Err(format!(
+                    "ELF contains memory contents for uninitialized memory at {addr:08x}"
+                )
+                .into());
             }
             if Opts::global().verbose {
                 println!(
@@ -140,88 +146,113 @@ pub struct PageFragment {
     pub bytes: u32,
 }
 
-pub(crate) fn read_and_check_elf32_ph_entries(
+pub(crate) fn read_elf32_ph_entries(
     input: &mut impl Read,
     eh: &Elf32Header,
-    valid_ranges: &[AddressRange],
-) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
-    let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
-
+) -> Result<Vec<Elf32PhEntry>, Box<dyn Error>> {
     if eh.ph_entry_size != mem::size_of::<Elf32PhEntry>().assert_into() {
         return Err("Invalid ELF32 program header".into());
     }
 
-    if eh.ph_num > 0 {
-        let mut entries = Vec::<Elf32PhEntry>::new();
-        entries.resize_with(eh.ph_num.assert_into(), Default::default);
+    let mut entries: Vec<Elf32PhEntry> = (0..eh.ph_num).map(|_| Default::default()).collect();
+    input.read_exact(entries.as_mut_slice().as_bytes_mut())?;
 
-        input.read_exact(entries.as_mut_slice().as_bytes_mut())?;
+    Ok(entries)
+}
 
-        for entry in &entries {
-            if entry.typ == PT_LOAD && entry.memsz > 0 {
-                let mapped_size = min(entry.filez, entry.memsz);
+pub(crate) fn check_elf32_ph_entries(
+    entries: &[Elf32PhEntry],
+    valid_ranges: &[AddressRange],
+) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
+    let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
 
-                if mapped_size > 0 {
-                    let ar = check_address_range(
+    for entry in entries {
+        if entry.typ == PT_LOAD && entry.memsz > 0 {
+            let mapped_size = min(entry.filez, entry.memsz);
+
+            if mapped_size > 0 {
+                let ar = check_address_range(
+                    valid_ranges,
+                    entry.paddr,
+                    entry.vaddr,
+                    mapped_size,
+                    false,
+                )?;
+
+                // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
+                if ar.typ != address_range::AddressRangeType::Contents {
+                    if Opts::global().verbose {
+                        println!("ignored");
+                    }
+                    continue;
+                }
+                let mut addr = entry.paddr;
+                let mut remaining = mapped_size;
+                let mut file_offset = entry.offset;
+                while remaining > 0 {
+                    let off = addr & (PAGE_SIZE - 1);
+                    let len = min(remaining, PAGE_SIZE - off);
+
+                    // list of fragments
+                    let fragments = pages.entry(addr - off).or_default();
+
+                    // note if filesz is zero, we want zero init which is handled because the
+                    // statement above creates an empty page fragment list
+                    // check overlap with any existing fragments
+                    for fragment in fragments.iter() {
+                        if (off < fragment.page_offset + fragment.bytes)
+                            != ((off + len) <= fragment.page_offset)
+                        {
+                            return Err("In memory segments overlap".into());
+                        }
+                    }
+                    fragments.push(PageFragment {
+                        file_offset,
+                        page_offset: off,
+                        bytes: len,
+                    });
+                    addr += len;
+                    file_offset += len;
+                    remaining -= len;
+                }
+                if entry.memsz > entry.filez {
+                    // we have some uninitialized data too
+                    check_address_range(
                         valid_ranges,
-                        entry.paddr,
-                        entry.vaddr,
-                        mapped_size,
-                        false,
+                        entry.paddr + entry.filez,
+                        entry.vaddr + entry.filez,
+                        entry.memsz - entry.filez,
+                        true,
                     )?;
-
-                    // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
-                    if ar.typ != address_range::AddressRangeType::Contents {
-                        if Opts::global().verbose {
-                            println!("ignored");
-                        }
-                        continue;
-                    }
-                    let mut addr = entry.paddr;
-                    let mut remaining = mapped_size;
-                    let mut file_offset = entry.offset;
-                    while remaining > 0 {
-                        let off = addr & (PAGE_SIZE - 1);
-                        let len = min(remaining, PAGE_SIZE - off);
-
-                        // list of fragments
-                        let fragments = pages.entry(addr - off).or_default();
-
-                        // note if filesz is zero, we want zero init which is handled because the
-                        // statement above creates an empty page fragment list
-                        // check overlap with any existing fragments
-                        for fragment in fragments.iter() {
-                            if (off < fragment.page_offset + fragment.bytes)
-                                != ((off + len) <= fragment.page_offset)
-                            {
-                                return Err("In memory segments overlap".into());
-                            }
-                        }
-                        fragments.push(PageFragment {
-                            file_offset,
-                            page_offset: off,
-                            bytes: len,
-                        });
-                        addr += len;
-                        file_offset += len;
-                        remaining -= len;
-                    }
-                    if entry.memsz > entry.filez {
-                        // we have some uninitialized data too
-                        check_address_range(
-                            valid_ranges,
-                            entry.paddr + entry.filez,
-                            entry.vaddr + entry.filez,
-                            entry.memsz - entry.filez,
-                            true,
-                        )?;
-                    }
                 }
             }
         }
     }
 
     Ok(pages)
+}
+
+// "determine_binary_type"
+pub(crate) fn is_ram_binary(eh: &Elf32Header, entries: &[Elf32PhEntry]) -> Option<bool> {
+    for entry in entries {
+        if entry.typ == PT_LOAD && entry.memsz > 0 {
+            let mapped_size = entry.filez.min(entry.memsz);
+            if mapped_size > 0 {
+                // We back-convert the entrypoint from a VADDR to a PADDR to see if it originates inflash, and if
+                // so call THAT a flash binary
+                if eh.entry >= entry.vaddr && eh.entry < entry.vaddr + mapped_size {
+                    let effective_entry = eh.entry + entry.paddr - entry.vaddr;
+                    if RP2040_ADDRESS_RANGES_RAM.is_address_initialized(effective_entry) {
+                        return Some(true);
+                    } else if RP2040_ADDRESS_RANGES_FLASH.is_address_initialized(effective_entry) {
+                        return Some(false);
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 pub fn realize_page(
