@@ -25,7 +25,7 @@ mod address_range;
 mod elf;
 mod uf2;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Default)]
 #[clap(author = "Jonathan Nilsson")]
 struct Opts {
     /// Verbose
@@ -267,4 +267,30 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+#[test]
+pub fn hello_usb() {
+    // Horrendous hack to get it to stop complaining about opts
+    // TODO: just pass opts by reference, or use log crate
+    OPTS.set(Default::default()).ok();
+
+    let bytes_in = io::Cursor::new(&include_bytes!("../hello_usb.elf")[..]);
+    let mut bytes_out = Vec::new();
+    elf2uf2(bytes_in, &mut bytes_out).unwrap();
+
+    assert_eq!(bytes_out, include_bytes!("../hello_usb.uf2"));
+}
+
+#[test]
+pub fn hello_serial() {
+    // Horrendous hack to get it to stop complaining about opts
+    // TODO: just pass opts by reference, or use log crate
+    OPTS.set(Default::default()).ok();
+
+    let bytes_in = io::Cursor::new(&include_bytes!("../hello_serial.elf")[..]);
+    let mut bytes_out = Vec::new();
+    elf2uf2(bytes_in, &mut bytes_out).unwrap();
+
+    assert_eq!(bytes_out, include_bytes!("../hello_serial.uf2"));
 }
