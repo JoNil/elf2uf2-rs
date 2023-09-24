@@ -15,7 +15,11 @@ assert_into = "1.1"
 clap = { version = "3.0.0-rc.4", features = ["derive"] }
 once_cell = "1.5"
 pbr = "1"
-serialport = "4"
+serialport = { version = "4", optional = true }
 static_assertions = "1"
 sysinfo = "0.28"
 zerocopy = "0.6"
+
+[features]
+default = ["serial"]
+serial = ["serialport"]
