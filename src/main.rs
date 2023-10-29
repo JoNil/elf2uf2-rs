@@ -6,16 +6,13 @@ use clap::Parser;
 use elf::{realize_page, AddressRangesExt, Elf32Header, PAGE_SIZE};
 use once_cell::sync::OnceCell;
 use pbr::{ProgressBar, Units};
-use serialport::FlowControl;
 use static_assertions::const_assert;
 use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
-    io::{self, BufReader, Read, Seek, Write},
+    io::{BufReader, Read, Seek, Write},
     path::{Path, PathBuf},
-    thread,
-    time::Duration,
 };
 use sysinfo::{DiskExt, SystemExt};
 use uf2::{
@@ -42,6 +39,7 @@ struct Opts {
     deploy: bool,
 
     /// Connect to serial after deploy
+    #[cfg(feature = "serial")]
     #[clap(short, long)]
     serial: bool,
 
@@ -229,50 +227,53 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
 fn main() -> Result<(), Box<dyn Error>> {
     OPTS.set(Opts::parse()).unwrap();
 
+    #[cfg(feature = "serial")]
     let serial_ports_before = serialport::available_ports()?;
+
     let mut deployed_path = None;
+    let input = BufReader::new(File::open(&Opts::global().input)?);
 
-    {
-        let input = BufReader::new(File::open(&Opts::global().input)?);
+    let output = if Opts::global().deploy {
+        let sys = sysinfo::System::new_all();
 
-        let output = if Opts::global().deploy {
-            let sys = sysinfo::System::new_all();
+        let mut pico_drive = None;
+        for disk in sys.disks() {
+            let mount = disk.mount_point();
 
-            let mut pico_drive = None;
-            for disk in sys.disks() {
-                let mount = disk.mount_point();
-
-                if mount.join("INFO_UF2.TXT").is_file() {
-                    println!("Found pico uf2 disk {}", &mount.to_string_lossy());
-                    pico_drive = Some(mount.to_owned());
-                    break;
-                }
+            if mount.join("INFO_UF2.TXT").is_file() {
+                println!("Found pico uf2 disk {}", &mount.to_string_lossy());
+                pico_drive = Some(mount.to_owned());
+                break;
             }
-
-            if let Some(pico_drive) = pico_drive {
-                deployed_path = Some(pico_drive.join("out.uf2"));
-                File::create(deployed_path.as_ref().unwrap())?
-            } else {
-                return Err("Unable to find mounted pico".into());
-            }
-        } else {
-            File::create(Opts::global().output_path())?
-        };
-
-        if let Err(err) = elf2uf2(input, output) {
-            if Opts::global().deploy {
-                fs::remove_file(deployed_path.unwrap())?;
-            } else {
-                fs::remove_file(Opts::global().output_path())?;
-            }
-            return Err(err);
         }
+
+        if let Some(pico_drive) = pico_drive {
+            deployed_path = Some(pico_drive.join("out.uf2"));
+            File::create(deployed_path.as_ref().unwrap())?
+        } else {
+            return Err("Unable to find mounted pico".into());
+        }
+    } else {
+        File::create(Opts::global().output_path())?
+    };
+
+    if let Err(err) = elf2uf2(input, output) {
+        if Opts::global().deploy {
+            fs::remove_file(deployed_path.unwrap())?;
+        } else {
+            fs::remove_file(Opts::global().output_path())?;
+        }
+        return Err(err);
     }
 
     // New line after progress bar
     println!();
 
+    #[cfg(feature = "serial")]
     if Opts::global().serial {
+        use std::time::Duration;
+        use std::{io, thread};
+
         let mut counter = 0;
 
         let serial_port_info = 'find_loop: loop {
@@ -296,7 +297,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             for _ in 0..5 {
                 if let Ok(mut port) = serialport::new(&serial_port_info.port_name, 115200)
                     .timeout(Duration::from_millis(100))
-                    .flow_control(FlowControl::Hardware)
+                    .flow_control(serialport::FlowControl::Hardware)
                     .open()
                 {
                     if port.write_data_terminal_ready(true).is_ok() {
