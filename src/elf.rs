@@ -1,5 +1,5 @@
 use crate::{
-    address_range::{self, AddressRange},
+    address_range::{self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM},
     Opts,
 };
 use assert_into::AssertInto;
@@ -51,6 +51,78 @@ pub struct Elf32Header {
     pub sh_str_index: u16,
 }
 
+impl Elf32Header {
+    // read_and_check_elf32_header
+    pub(crate) fn from_read(input: &mut impl Read) -> Result<Self, Box<dyn Error>> {
+        let mut eh = Elf32Header::default();
+
+        input.read_exact(eh.as_bytes_mut())?;
+
+        if eh.common.magic != ELF_MAGIC {
+            return Err("Not an ELF file".into());
+        }
+        if eh.common.version != 1 || eh.common.version2 != 1 {
+            return Err("Unrecognized ELF version".into());
+        }
+        if eh.common.arch_class != 1 || eh.common.endianness != 1 {
+            return Err("Require 32 bit little-endian ELF".into());
+        }
+        if eh.eh_size != mem::size_of::<Elf32Header>().assert_into() {
+            return Err("Invalid ELF32 format".into());
+        }
+        if eh.common.machine != EM_ARM {
+            return Err("Not an ARM executable".into());
+        }
+        if eh.common.abi != 0 {
+            return Err("Unrecognized ABI".into());
+        }
+        if eh.flags & EF_ARM_ABI_FLOAT_HARD > 0 {
+            return Err("HARD-FLOAT not supported".into());
+        }
+
+        Ok(eh)
+    }
+
+    pub(crate) fn read_elf32_ph_entries(
+        &self,
+        input: &mut impl Read,
+    ) -> Result<Vec<Elf32PhEntry>, Box<dyn Error>> {
+        if self.ph_entry_size != mem::size_of::<Elf32PhEntry>().assert_into() {
+            return Err("Invalid ELF32 program header".into());
+        }
+
+        let mut entries: Vec<Elf32PhEntry> = (0..self.ph_num).map(|_| Default::default()).collect();
+        input.read_exact(entries.as_mut_slice().as_bytes_mut())?;
+
+        Ok(entries)
+    }
+
+    // "determine_binary_type"
+    pub(crate) fn is_ram_binary(&self, entries: &[Elf32PhEntry]) -> Option<bool> {
+        for entry in entries {
+            if entry.typ == PT_LOAD && entry.memsz > 0 {
+                let mapped_size = entry.filez.min(entry.memsz);
+                if mapped_size > 0 {
+                    // We back-convert the entrypoint from a VADDR to a PADDR to see if it originates inflash, and if
+                    // so call THAT a flash binary
+                    if self.entry >= entry.vaddr && self.entry < entry.vaddr + mapped_size {
+                        let effective_entry = self.entry + entry.paddr - entry.vaddr;
+                        if RP2040_ADDRESS_RANGES_RAM.is_address_initialized(effective_entry) {
+                            return Some(true);
+                        } else if RP2040_ADDRESS_RANGES_FLASH
+                            .is_address_initialized(effective_entry)
+                        {
+                            return Some(false);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
+
 #[repr(packed)]
 #[derive(AsBytes, Copy, Clone, Default, Debug, FromBytes)]
 pub struct Elf32PhEntry {
@@ -64,75 +136,6 @@ pub struct Elf32PhEntry {
     pub align: u32,
 }
 
-pub(crate) fn read_and_check_elf32_header(
-    input: &mut impl Read,
-) -> Result<Elf32Header, Box<dyn Error>> {
-    let mut eh = Elf32Header::default();
-
-    input.read_exact(eh.as_bytes_mut())?;
-
-    if eh.common.magic != ELF_MAGIC {
-        return Err("Not an ELF file".into());
-    }
-    if eh.common.version != 1 || eh.common.version2 != 1 {
-        return Err("Unrecognized ELF version".into());
-    }
-    if eh.common.arch_class != 1 || eh.common.endianness != 1 {
-        return Err("Require 32 bit little-endian ELF".into());
-    }
-    if eh.eh_size != mem::size_of::<Elf32Header>().assert_into() {
-        return Err("Invalid ELF32 format".into());
-    }
-    if eh.common.machine != EM_ARM {
-        return Err("Not an ARM executable".into());
-    }
-    if eh.common.abi != 0 {
-        return Err("Unrecognized ABI".into());
-    }
-    if eh.flags & EF_ARM_ABI_FLOAT_HARD > 0 {
-        return Err("HARD-FLOAT not supported".into());
-    }
-
-    Ok(eh)
-}
-
-fn check_address_range(
-    valid_ranges: &[AddressRange],
-    addr: u32,
-    vaddr: u32,
-    size: u32,
-    uninitialized: bool,
-) -> Result<AddressRange, Box<dyn Error>> {
-    for range in valid_ranges {
-        if range.from <= addr && range.to >= addr + size {
-            if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
-                return Err("ELF contains memory contents for uninitialized memory".into());
-            }
-            if Opts::global().verbose {
-                println!(
-                    "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
-                    if uninitialized {
-                        "Uninitialized"
-                    } else {
-                        "Mapped"
-                    },
-                    addr,
-                    addr + size,
-                    vaddr,
-                    vaddr + size
-                );
-            }
-            return Ok(*range);
-        }
-    }
-    Err(format!(
-        "Memory segment {:#08x}->{:#08x} is outside of valid address range for device",
-        addr,
-        addr + size
-    )
-    .into())
-}
-
 #[derive(Copy, Clone, Debug, Default)]
 pub struct PageFragment {
     pub file_offset: u32,
@@ -140,35 +143,97 @@ pub struct PageFragment {
     pub bytes: u32,
 }
 
-pub(crate) fn read_and_check_elf32_ph_entries(
-    input: &mut impl Read,
-    eh: &Elf32Header,
-    valid_ranges: &[AddressRange],
-) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
-    let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
+pub fn realize_page(
+    input: &mut (impl Read + Seek),
+    fragments: &[PageFragment],
+    buf: &mut [u8],
+) -> Result<(), Box<dyn Error>> {
+    assert!(buf.len() >= PAGE_SIZE.assert_into());
 
-    if eh.ph_entry_size != mem::size_of::<Elf32PhEntry>().assert_into() {
-        return Err("Invalid ELF32 program header".into());
+    for frag in fragments {
+        assert!(frag.page_offset < PAGE_SIZE && frag.page_offset + frag.bytes <= PAGE_SIZE);
+
+        input.seek(SeekFrom::Start(frag.file_offset.assert_into()))?;
+
+        input.read_exact(
+            &mut buf[frag.page_offset.assert_into()..(frag.page_offset + frag.bytes).assert_into()],
+        )?;
     }
 
-    if eh.ph_num > 0 {
-        let mut entries = Vec::<Elf32PhEntry>::new();
-        entries.resize_with(eh.ph_num.assert_into(), Default::default);
+    Ok(())
+}
 
-        input.read_exact(entries.as_mut_slice().as_bytes_mut())?;
+pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
+    fn range_for(&self, addr: u32) -> Option<&'a AddressRange> {
+        self.clone()
+            .into_iter()
+            .find(|r| r.from <= addr && r.to > addr)
+    }
 
-        for entry in &entries {
+    fn is_address_initialized(&self, addr: u32) -> bool {
+        let range = if let Some(range) = self.range_for(addr) {
+            range
+        } else {
+            return false;
+        };
+
+        matches!(range.typ, address_range::AddressRangeType::Contents)
+    }
+
+    // "check_address_range"
+    fn check_address_range(
+        &self,
+        addr: u32,
+        vaddr: u32,
+        size: u32,
+        uninitialized: bool,
+    ) -> Result<AddressRange, Box<dyn Error>> {
+        for range in self.clone().into_iter() {
+            if range.from <= addr && range.to >= addr + size {
+                if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
+                    return Err(format!(
+                        "ELF contains memory contents for uninitialized memory at {addr:08x}"
+                    )
+                    .into());
+                }
+                if Opts::global().verbose {
+                    println!(
+                        "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
+                        if uninitialized {
+                            "Uninitialized"
+                        } else {
+                            "Mapped"
+                        },
+                        addr,
+                        addr + size,
+                        vaddr,
+                        vaddr + size
+                    );
+                }
+                return Ok(*range);
+            }
+        }
+        Err(format!(
+            "Memory segment {:#08x}->{:#08x} is outside of valid address range for device",
+            addr,
+            addr + size
+        )
+        .into())
+    }
+
+    fn check_elf32_ph_entries(
+        &self,
+        entries: &[Elf32PhEntry],
+    ) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
+        let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
+
+        for entry in entries {
             if entry.typ == PT_LOAD && entry.memsz > 0 {
                 let mapped_size = min(entry.filez, entry.memsz);
 
                 if mapped_size > 0 {
-                    let ar = check_address_range(
-                        valid_ranges,
-                        entry.paddr,
-                        entry.vaddr,
-                        mapped_size,
-                        false,
-                    )?;
+                    let ar =
+                        self.check_address_range(entry.paddr, entry.vaddr, mapped_size, false)?;
 
                     // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
                     if ar.typ != address_range::AddressRangeType::Contents {
@@ -208,8 +273,7 @@ pub(crate) fn read_and_check_elf32_ph_entries(
                     }
                     if entry.memsz > entry.filez {
                         // we have some uninitialized data too
-                        check_address_range(
-                            valid_ranges,
+                        self.check_address_range(
                             entry.paddr + entry.filez,
                             entry.vaddr + entry.filez,
                             entry.memsz - entry.filez,
@@ -219,27 +283,9 @@ pub(crate) fn read_and_check_elf32_ph_entries(
                 }
             }
         }
-    }
 
-    Ok(pages)
+        Ok(pages)
+    }
 }
 
-pub fn realize_page(
-    input: &mut (impl Read + Seek),
-    fragments: &[PageFragment],
-    buf: &mut [u8],
-) -> Result<(), Box<dyn Error>> {
-    assert!(buf.len() >= PAGE_SIZE.assert_into());
-
-    for frag in fragments {
-        assert!(frag.page_offset < PAGE_SIZE && frag.page_offset + frag.bytes <= PAGE_SIZE);
-
-        input.seek(SeekFrom::Start(frag.file_offset.assert_into()))?;
-
-        input.read_exact(
-            &mut buf[frag.page_offset.assert_into()..(frag.page_offset + frag.bytes).assert_into()],
-        )?;
-    }
-
-    Ok(())
-}
+impl<'a, T> AddressRangesExt<'a> for T where T: IntoIterator<Item = &'a AddressRange> + Clone {}
