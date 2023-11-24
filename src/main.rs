@@ -287,7 +287,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             counter += 1;
 
-            if counter == 50 {
+            if counter == 20 {
                 break None;
             }
 
