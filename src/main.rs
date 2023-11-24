@@ -287,7 +287,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             counter += 1;
 
-            if counter == 20 {
+            if counter == 100 {
                 break None;
             }
 
@@ -295,10 +295,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         if let Some(serial_port_info) = serial_port_info {
-            for _ in 0..5 {
+            for _ in 0..100 {
                 if let Ok(mut port) = serialport::new(&serial_port_info.port_name, 115200)
                     .timeout(Duration::from_millis(100))
-                    .flow_control(serialport::FlowControl::Hardware)
+                    .flow_control(serialport::FlowControl::None)
                     .open()
                 {
                     if port.write_data_terminal_ready(true).is_ok() {
