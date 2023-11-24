@@ -99,7 +99,8 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         let mut expected_ep_main_ram = u32::MAX;
         let mut expected_ep_xip_sram = u32::MAX;
 
-        pages.iter().map(|(a, _)| *a).for_each(|addr| {
+        #[allow(clippy::manual_range_contains)]
+        pages.keys().copied().for_each(|addr| {
             if addr >= MAIN_RAM_START && addr <= MAIN_RAM_END {
                 expected_ep_main_ram = expected_ep_main_ram.min(addr) | 0x1;
             } else if addr >= XIP_SRAM_START && addr < XIP_SRAM_END {
@@ -116,6 +117,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         if expected_ep == expected_ep_xip_sram {
             return Err("B0/B1 Boot ROM does not support direct entry into XIP_SRAM".into());
         } else if eh.entry != expected_ep {
+            #[allow(clippy::unnecessary_cast)]
             return Err(format!(
                 "A RAM binary should have an entry point at the beginning: {:#08x} (not {:#08x})",
                 expected_ep, eh.entry as u32
@@ -133,8 +135,8 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         // https://github.com/raspberrypi/pico-bootrom/blob/c09c7f08550e8a36fc38dc74f8873b9576de99eb/bootrom/virtual_disk.c#L205
 
         let touched_sectors: HashSet<u32> = pages
-            .iter()
-            .map(|(addr, _)| addr / FLASH_SECTOR_ERASE_SIZE)
+            .keys()
+            .map(|addr| addr / FLASH_SECTOR_ERASE_SIZE)
             .collect();
 
         let last_page_addr = *pages.last_key_value().unwrap().0;
@@ -142,10 +144,8 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
             let mut page = sector * FLASH_SECTOR_ERASE_SIZE;
 
             while page < (sector + 1) * FLASH_SECTOR_ERASE_SIZE {
-                if page < last_page_addr {
-                    if !pages.contains_key(&page) {
-                        pages.insert(page, Vec::new());
-                    }
+                if page < last_page_addr && !pages.contains_key(&page) {
+                    pages.insert(page, Vec::new());
                 }
                 page += PAGE_SIZE;
             }
@@ -189,6 +189,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         block_header.target_addr = target_addr;
         block_header.block_no = page_num.assert_into();
 
+        #[allow(clippy::unnecessary_cast)]
         if Opts::global().verbose {
             println!(
                 "Page {} / {} {:#08x}",
@@ -286,7 +287,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             counter += 1;
 
-            if counter == 10 {
+            if counter == 50 {
                 break None;
             }
 
