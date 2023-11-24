@@ -323,28 +323,34 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[test]
-pub fn hello_usb() {
-    // Horrendous hack to get it to stop complaining about opts
-    // TODO: just pass opts by reference, or use log crate
-    OPTS.set(Default::default()).ok();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
 
-    let bytes_in = io::Cursor::new(&include_bytes!("../hello_usb.elf")[..]);
-    let mut bytes_out = Vec::new();
-    elf2uf2(bytes_in, &mut bytes_out).unwrap();
+    #[test]
+    pub fn hello_usb() {
+        // Horrendous hack to get it to stop complaining about opts
+        // TODO: just pass opts by reference, or use log crate
+        OPTS.set(Default::default()).ok();
 
-    assert_eq!(bytes_out, include_bytes!("../hello_usb.uf2"));
-}
+        let bytes_in = io::Cursor::new(&include_bytes!("../hello_usb.elf")[..]);
+        let mut bytes_out = Vec::new();
+        elf2uf2(bytes_in, &mut bytes_out).unwrap();
 
-#[test]
-pub fn hello_serial() {
-    // Horrendous hack to get it to stop complaining about opts
-    // TODO: just pass opts by reference, or use log crate
-    OPTS.set(Default::default()).ok();
+        assert_eq!(bytes_out, include_bytes!("../hello_usb.uf2"));
+    }
 
-    let bytes_in = io::Cursor::new(&include_bytes!("../hello_serial.elf")[..]);
-    let mut bytes_out = Vec::new();
-    elf2uf2(bytes_in, &mut bytes_out).unwrap();
+    #[test]
+    pub fn hello_serial() {
+        // Horrendous hack to get it to stop complaining about opts
+        // TODO: just pass opts by reference, or use log crate
+        OPTS.set(Default::default()).ok();
 
-    assert_eq!(bytes_out, include_bytes!("../hello_serial.uf2"));
+        let bytes_in = io::Cursor::new(&include_bytes!("../hello_serial.elf")[..]);
+        let mut bytes_out = Vec::new();
+        elf2uf2(bytes_in, &mut bytes_out).unwrap();
+
+        assert_eq!(bytes_out, include_bytes!("../hello_serial.uf2"));
+    }
 }
