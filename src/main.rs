@@ -11,7 +11,7 @@ use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
-    io::{BufReader, Read, Seek, Write},
+    io::{BufReader, Read, Seek, Write, BufWriter},
     path::{Path, PathBuf},
 };
 use sysinfo::{DiskExt, SystemExt};
@@ -206,8 +206,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         output.write_all(block_header.as_bytes())?;
         output.write_all(block_data.as_bytes())?;
         output.write_all(block_footer.as_bytes())?;
-        output.flush()?;
-
+        
         if page_num != last_page_num {
             if let Some(pb) = &mut pb {
                 pb.add(512);
@@ -258,7 +257,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         File::create(Opts::global().output_path())?
     };
 
-    if let Err(err) = elf2uf2(input, output) {
+    if let Err(err) = elf2uf2(input, BufWriter::new(output)) {
         if Opts::global().deploy {
             fs::remove_file(deployed_path.unwrap())?;
         } else {
