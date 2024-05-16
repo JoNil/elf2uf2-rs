@@ -26,7 +26,14 @@ mod uf2;
 
 #[derive(Clone, ValueEnum, Debug)]
 enum Boards {
-    RP2040
+    RP2040,
+    CircuitPlaygroundBluefruit
+}
+
+impl std::fmt::Display for Boards{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl Default for Boards {
@@ -241,6 +248,9 @@ fn get_board_config() -> Box<dyn BoardConfig> {
     let board_config: Box<dyn BoardConfig> = match &Opts::global().board {
         Boards::RP2040 => {
             Box::new(boards::rp2040::RP2040{})
+        }
+        Boards::CircuitPlaygroundBluefruit => {
+            Box::new(boards::circuit_playground_bluefruit::CircuitPlaygroundBluefruit{})
         }
     };
     board_config

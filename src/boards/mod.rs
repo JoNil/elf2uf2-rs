@@ -13,3 +13,4 @@ pub trait BoardConfig {
 }
 
 pub mod rp2040;
+pub mod circuit_playground_bluefruit;
