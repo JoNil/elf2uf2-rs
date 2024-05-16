@@ -7,7 +7,7 @@ use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
-    io::{BufReader, Read, Seek, Write, BufWriter},
+    io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 use sysinfo::{DiskExt, SystemExt};
@@ -182,7 +182,8 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
     };
 
     if Opts::global().deploy {
-        println!("Transfering program to pico");
+        let board_name = &Opts::global().board;
+        println!("Transfering program to {board_name}");
     }
 
     let mut pb = if !Opts::global().verbose && Opts::global().deploy {
@@ -258,11 +259,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let sys = sysinfo::System::new_all();
 
         let mut pico_drive = None;
+        let board_name = &Opts::global().board;
         for disk in sys.disks() {
             let mount = disk.mount_point();
 
-            if mount.join("INFO_UF2.TXT").is_file() {
-                println!("Found pico uf2 disk {}", &mount.to_string_lossy());
+            if mount.join("INFO_UF2.TXT").is_file() {                
+                println!("Found {board_name} uf2 disk {}", &mount.to_string_lossy());
                 pico_drive = Some(mount.to_owned());
                 break;
             }
@@ -297,10 +299,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let mut counter = 0;
 
+        let board_name = &Opts::global().board;
         let serial_port_info = 'find_loop: loop {
             for port in serialport::available_ports()? {
                 if !serial_ports_before.contains(&port) {
-                    println!("Found pico serial on {}", &port.port_name);
+                    println!("Found {board_name} serial on {}", &port.port_name);
                     break 'find_loop Some(port);
                 }
             }
