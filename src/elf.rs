@@ -70,14 +70,8 @@ impl Elf32Header {
         if eh.eh_size != mem::size_of::<Elf32Header>().assert_into() {
             return Err("Invalid ELF32 format".into());
         }
-        if eh.common.machine != EM_ARM {
-            return Err("Not an ARM executable".into());
-        }
         if eh.common.abi != 0 {
             return Err("Unrecognized ABI".into());
-        }
-        if eh.flags & EF_ARM_ABI_FLOAT_HARD > 0 {
-            return Err("HARD-FLOAT not supported".into());
         }
 
         Ok(eh)
