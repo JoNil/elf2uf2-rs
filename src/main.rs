@@ -43,8 +43,9 @@ struct Opts {
     #[clap(short, long)]
     serial: bool,
 
+    /// Use if on ChromeOS (Crostini)
     #[clap(short, long)]
-    on_chromeos: bool,
+    crostini: bool,
 
     /// Input file
     input: String,
@@ -238,8 +239,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let output = if Opts::global().deploy {
         let mut pico_drive = None;
-        if Opts::global().on_chromeos {
-            pico_drive = Some(std::path::PathBuf::from(r"/mnt/chromeos/removable/RPI-RP2"));
+        if Opts::global().crostini {
+            pico_drive = Some(PathBuf::from(r"/mnt/chromeos/removable/RPI-RP2"));
         } else {
             for disk in Disks::new_with_refreshed_list().list() {
                 let mount = disk.mount_point();
