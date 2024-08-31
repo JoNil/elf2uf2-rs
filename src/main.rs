@@ -11,10 +11,10 @@ use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
-    io::{BufReader, Read, Seek, Write, BufWriter},
+    io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
 };
-use sysinfo::{DiskExt, SystemExt};
+use sysinfo::Disks;
 use uf2::{
     Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT,
     UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
@@ -42,6 +42,9 @@ struct Opts {
     #[cfg(feature = "serial")]
     #[clap(short, long)]
     serial: bool,
+
+    #[clap(short, long)]
+    on_chromeos: bool,
 
     /// Input file
     input: String,
@@ -206,7 +209,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         output.write_all(block_header.as_bytes())?;
         output.write_all(block_data.as_bytes())?;
         output.write_all(block_footer.as_bytes())?;
-        
+
         if page_num != last_page_num {
             if let Some(pb) = &mut pb {
                 pb.add(512);
@@ -234,16 +237,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let input = BufReader::new(File::open(&Opts::global().input)?);
 
     let output = if Opts::global().deploy {
-        let sys = sysinfo::System::new_all();
-
         let mut pico_drive = None;
-        for disk in sys.disks() {
-            let mount = disk.mount_point();
+        if Opts::global().on_chromeos {
+            pico_drive = Some(std::path::PathBuf::from(r"/mnt/chromeos/removable/RPI-RP2"));
+        } else {
+            for disk in Disks::new_with_refreshed_list().list() {
+                let mount = disk.mount_point();
 
-            if mount.join("INFO_UF2.TXT").is_file() {
-                println!("Found pico uf2 disk {}", &mount.to_string_lossy());
-                pico_drive = Some(mount.to_owned());
-                break;
+                if mount.join("INFO_UF2.TXT").is_file() {
+                    println!("Found pico uf2 disk {}", &mount.to_string_lossy());
+                    pico_drive = Some(mount.to_owned());
+                    break;
+                }
             }
         }
 
