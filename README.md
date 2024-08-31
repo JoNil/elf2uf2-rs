@@ -9,4 +9,4 @@ cargo install elf2uf2-rs
 * -c on ChromeOS (Crostini), expects the RPI-RP2 drive on /mnt/chromeos/removable/RPI-RP2.
 * -s open the pico as a serial device after deploy and print serial output.
 
-Original at https://github.com/raspberrypi/pico-sdk/tree/master/tools/elf2uf2
+Original at https://github.com/raspberrypi/picotool/tree/master/elf2uf2
