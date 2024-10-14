@@ -13,6 +13,7 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
+    sync::mpsc::TrySendError,
     sync::OnceLock,
 };
 use sysinfo::Disks;
@@ -25,6 +26,7 @@ use zerocopy::IntoBytes;
 mod address_range;
 mod elf;
 mod uf2;
+mod viewer;
 
 #[derive(Parser, Debug, Default)]
 #[clap(author = "Jonathan Nilsson")]
@@ -273,6 +275,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // New line after progress bar
     println!();
 
+    let viewer_tx = viewer::run();
+
     #[cfg(feature = "serial")]
     if Opts::global().serial {
         use std::process;
@@ -326,18 +330,76 @@ fn main() -> Result<(), Box<dyn Error>> {
                         let mut port = port.lock().unwrap();
                         port.write_data_terminal_ready(true).is_ok()
                     };
+
                     if data_terminal_ready_succeeded {
-                        let mut serial_buf = [0; 1024];
+                        let mut marker_buffer = [0; 4];
+                        let mut tmp_buffer = [0; 1];
                         loop {
                             let read = {
                                 let mut port = port.lock().unwrap();
-                                port.read(&mut serial_buf)
+                                port.read_exact(&mut tmp_buffer)
                             };
 
                             match read {
-                                Ok(t) => {
-                                    io::stdout().write_all(&serial_buf[..t])?;
-                                    io::stdout().flush()?;
+                                Ok(_) => {
+                                    marker_buffer.rotate_left(1);
+                                    marker_buffer[3] = tmp_buffer[0];
+
+                                    if u32::from_le_bytes(marker_buffer) == 0x51719b7c {
+                                        let message_type = {
+                                            let mut type_len_buffer = [0; 1];
+                                            let read = {
+                                                let mut port = port.lock().unwrap();
+                                                port.read_exact(&mut type_len_buffer)
+                                            };
+                                            match read {
+                                                Ok(_) => type_len_buffer[0],
+                                                Err(e) => return Err(e.into()),
+                                            }
+                                        };
+
+                                        let message_len = {
+                                            let mut len_buffer = [0; 4];
+                                            let read = {
+                                                let mut port = port.lock().unwrap();
+                                                port.read_exact(&mut len_buffer)
+                                            };
+                                            match read {
+                                                Ok(_) => u32::from_le_bytes(len_buffer),
+                                                Err(e) => return Err(e.into()),
+                                            }
+                                        };
+
+                                        let mut buffer = vec![0u8; message_len as usize];
+                                        let read = {
+                                            let mut port = port.lock().unwrap();
+                                            port.read_exact(&mut buffer)
+                                        };
+
+                                        let got_buffer = match read {
+                                            Ok(_) => true,
+                                            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
+                                                false
+                                            }
+                                            Err(e) => return Err(e.into()),
+                                        };
+
+                                        if got_buffer {
+                                            if message_type == 1 {
+                                                if let Err(TrySendError::Disconnected(_)) =
+                                                    viewer_tx.try_send(buffer)
+                                                {
+                                                    if Opts::global().term {
+                                                        handler();
+                                                    }
+                                                    return Err("Viewer exited".into());
+                                                }
+                                            } else if message_type == 2 {
+                                                io::stdout().write_all(&buffer)?;
+                                                io::stdout().flush()?;
+                                            }
+                                        }
+                                    }
                                 }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
                                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {
