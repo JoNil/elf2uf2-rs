@@ -1,0 +1,79 @@
+use minifb::{Key, Scale, Window, WindowOptions};
+use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
+
+const WIDTH: usize = 1024;
+const HEIGHT: usize = 640;
+
+pub fn run() -> SyncSender<Vec<u8>> {
+    let (tx, rx) = sync_channel(2);
+
+    std::thread::spawn(move || {
+        let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
+
+        let mut options = WindowOptions::default();
+        options.scale = Scale::X2;
+
+        let mut window = Window::new("Viewer - ESC to exit", WIDTH, HEIGHT, options)
+            .unwrap_or_else(|e| {
+                panic!("{}", e);
+            });
+
+        window.set_target_fps(60);
+
+        let mut stride = 4 * 180;
+        let mut offset = 0;
+
+        let mut data = Vec::new();
+
+        while window.is_open() && !window.is_key_down(Key::Escape) {
+            buffer.fill(0);
+
+            match rx.try_recv() {
+                Ok(new_data) => data = new_data,
+                Err(TryRecvError::Disconnected) => {
+                    break;
+                }
+                _ => (),
+            }
+
+            for (y, line) in data[offset..].chunks(stride).enumerate() {
+                let mut x = 0;
+
+                for value in line {
+                    if x + y * WIDTH < buffer.len() {
+                        buffer[x + y * WIDTH] = (*value as u32) << 16;
+                    }
+                    x += 1;
+                }
+            }
+
+            if window.is_key_down(Key::X) || window.is_key_pressed(Key::S, minifb::KeyRepeat::Yes) {
+                stride += 1;
+
+                println!("Stride: {stride}, Offset: {offset}");
+            }
+
+            if window.is_key_down(Key::Z) || window.is_key_pressed(Key::A, minifb::KeyRepeat::Yes) {
+                stride = (stride - 1).max(1);
+
+                println!("Stride: {stride}, Offset: {offset}");
+            }
+
+            if window.is_key_down(Key::V) || window.is_key_pressed(Key::F, minifb::KeyRepeat::Yes) {
+                offset += 1;
+
+                println!("Stride: {stride}, Offset: {offset}");
+            }
+
+            if window.is_key_down(Key::C) || window.is_key_pressed(Key::D, minifb::KeyRepeat::Yes) {
+                offset = (offset - 1).max(1);
+
+                println!("Stride: {stride}, Offset: {offset}");
+            }
+
+            window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+        }
+    });
+
+    tx
+}

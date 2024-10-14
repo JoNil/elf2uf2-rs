@@ -9,9 +9,10 @@ use pbr::{ProgressBar, Units};
 use static_assertions::const_assert;
 use std::{
     collections::HashSet,
+    convert::TryInto,
     error::Error,
     fs::{self, File},
-    io::{BufReader, Read, Seek, Write, BufWriter},
+    io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 use sysinfo::{DiskExt, SystemExt};
@@ -26,6 +27,7 @@ use crate::address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START};
 mod address_range;
 mod elf;
 mod uf2;
+mod viewer;
 
 #[derive(Parser, Debug, Default)]
 #[clap(author = "Jonathan Nilsson")]
@@ -206,7 +208,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         output.write_all(block_header.as_bytes())?;
         output.write_all(block_data.as_bytes())?;
         output.write_all(block_footer.as_bytes())?;
-        
+
         if page_num != last_page_num {
             if let Some(pb) = &mut pb {
                 pb.add(512);
@@ -269,6 +271,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // New line after progress bar
     println!();
 
+    let viewer_tx = viewer::run();
+
+    const EXPECTED_SIZE: usize = 320 * 180 * 4;
+
     #[cfg(feature = "serial")]
     if Opts::global().serial {
         use std::time::Duration;
@@ -301,12 +307,26 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .open()
                 {
                     if port.write_data_terminal_ready(true).is_ok() {
-                        let mut serial_buf = [0; 1024];
+                        let mut marker_buffer = [0; 4];
+                        let mut tmp_buffer = [0; 1];
                         loop {
-                            match port.read(&mut serial_buf) {
-                                Ok(t) => {
-                                    io::stdout().write_all(&serial_buf[..t])?;
-                                    io::stdout().flush()?;
+                            match port.read_exact(&mut tmp_buffer) {
+                                Ok(_) => {
+                                    marker_buffer.rotate_left(1);
+                                    marker_buffer[3] = tmp_buffer[0];
+
+                                    if u32::from_le_bytes(marker_buffer) == 0x51719b7c {
+
+                                        let mut buffer = vec![0u8; EXPECTED_SIZE];
+
+                                        match port.read_exact(&mut buffer) {
+                                            Ok(_) => {
+                                                viewer_tx.try_send(buffer).ok();
+                                            }
+                                            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+                                            Err(e) => return Err(e.into()),
+                                        }
+                                    }
                                 }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
                                 Err(e) => return Err(e.into()),
