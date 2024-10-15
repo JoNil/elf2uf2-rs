@@ -9,11 +9,11 @@ use pbr::{ProgressBar, Units};
 use static_assertions::const_assert;
 use std::{
     collections::HashSet,
-    convert::TryInto,
     error::Error,
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
+    sync::mpsc::TrySendError,
 };
 use sysinfo::{DiskExt, SystemExt};
 use uf2::{
@@ -273,8 +273,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let viewer_tx = viewer::run();
 
-    const EXPECTED_SIZE: usize = 320 * 180 * 4;
-
     #[cfg(feature = "serial")]
     if Opts::global().serial {
         use std::time::Duration;
@@ -316,15 +314,43 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     marker_buffer[3] = tmp_buffer[0];
 
                                     if u32::from_le_bytes(marker_buffer) == 0x51719b7c {
-
-                                        let mut buffer = vec![0u8; EXPECTED_SIZE];
-
-                                        match port.read_exact(&mut buffer) {
-                                            Ok(_) => {
-                                                viewer_tx.try_send(buffer).ok();
+                                        let message_type = {
+                                            let mut type_len_buffer = [0; 1];
+                                            match port.read_exact(&mut type_len_buffer) {
+                                                Ok(_) => type_len_buffer[0],
+                                                Err(e) => return Err(e.into()),
                                             }
-                                            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+                                        };
+
+                                        let message_len = {
+                                            let mut len_buffer = [0; 4];
+                                            match port.read_exact(&mut len_buffer) {
+                                                Ok(_) => u32::from_le_bytes(len_buffer),
+                                                Err(e) => return Err(e.into()),
+                                            }
+                                        };
+
+                                        let mut buffer = vec![0u8; message_len as usize];
+
+                                        let got_buffer = match port.read_exact(&mut buffer) {
+                                            Ok(_) => true,
+                                            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
+                                                false
+                                            }
                                             Err(e) => return Err(e.into()),
+                                        };
+
+                                        if got_buffer {
+                                            if message_type == 1 {
+                                                if let Err(TrySendError::Disconnected(_)) =
+                                                    viewer_tx.try_send(buffer)
+                                                {
+                                                    return Err("Viewer exited".into());
+                                                }
+                                            } else if message_type == 2 {
+                                                io::stdout().write_all(&buffer)?;
+                                                io::stdout().flush()?;
+                                            }
                                         }
                                     }
                                 }
