@@ -20,7 +20,7 @@ pub fn run() -> SyncSender<Vec<u8>> {
 
         window.set_target_fps(60);
 
-        let mut stride = 4 * 180;
+        let mut stride = 2 * 180;
         let mut offset = 0;
 
         let mut data = Vec::new();
