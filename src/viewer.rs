@@ -37,13 +37,11 @@ pub fn run() -> SyncSender<Vec<u8>> {
             }
 
             for (y, line) in data[offset..].chunks(stride).enumerate() {
-                let mut x = 0;
-
-                for value in line {
+                for (x, value) in line.iter().enumerate() {
                     if x + y * WIDTH < buffer.len() {
-                        buffer[x + y * WIDTH] = (*value as u32) << 16;
+                        buffer[x + y * WIDTH] =
+                            (*value as u32) << 16 | (*value as u32) << 8 | (*value as u32);
                     }
-                    x += 1;
                 }
             }
 
