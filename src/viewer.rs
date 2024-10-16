@@ -10,8 +10,10 @@ pub fn run() -> SyncSender<Vec<u8>> {
     std::thread::spawn(move || {
         let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
 
-        let mut options = WindowOptions::default();
-        options.scale = Scale::X4;
+        let options = WindowOptions {
+            scale: Scale::X4,
+            ..Default::default()
+        };
 
         let mut window = Window::new("Viewer - ESC to exit", WIDTH, HEIGHT, options)
             .unwrap_or_else(|e| {
