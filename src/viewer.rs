@@ -1,8 +1,8 @@
 use minifb::{Key, Scale, Window, WindowOptions};
 use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
 
-const WIDTH: usize = 1024;
-const HEIGHT: usize = 640;
+const WIDTH: usize = 360;
+const HEIGHT: usize = 288;
 
 pub fn run() -> SyncSender<Vec<u8>> {
     let (tx, rx) = sync_channel(2);
@@ -11,7 +11,7 @@ pub fn run() -> SyncSender<Vec<u8>> {
         let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
 
         let mut options = WindowOptions::default();
-        options.scale = Scale::X2;
+        options.scale = Scale::X4;
 
         let mut window = Window::new("Viewer - ESC to exit", WIDTH, HEIGHT, options)
             .unwrap_or_else(|e| {
