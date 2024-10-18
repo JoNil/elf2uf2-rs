@@ -11,8 +11,9 @@ use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
-    io::{BufReader, Read, Seek, Write, BufWriter},
+    io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
+    thread::sleep,
 };
 use sysinfo::{DiskExt, SystemExt};
 use uf2::{
@@ -206,7 +207,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         output.write_all(block_header.as_bytes())?;
         output.write_all(block_data.as_bytes())?;
         output.write_all(block_footer.as_bytes())?;
-        
+
         if page_num != last_page_num {
             if let Some(pb) = &mut pb {
                 pb.add(512);
@@ -271,6 +272,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     #[cfg(feature = "serial")]
     if Opts::global().serial {
+        use std::process;
+        use std::sync::{Arc, Mutex};
         use std::time::Duration;
         use std::{io, thread};
 
@@ -295,20 +298,37 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         if let Some(serial_port_info) = serial_port_info {
             for _ in 0..100 {
-                if let Ok(mut port) = serialport::new(&serial_port_info.port_name, 115200)
+                if let Ok(port) = serialport::new(&serial_port_info.port_name, 115200)
                     .timeout(Duration::from_millis(100))
                     .flow_control(serialport::FlowControl::None)
                     .open()
                 {
+                    let port = Arc::new(Mutex::new(port));
+                    let port_clone = Arc::clone(&port);
+
+                    let handler = move || {
+                        let mut port = port_clone.lock().unwrap();
+                        let _ = port.write_all(b"elf2uf2-term\n\r");
+                        process::exit(0);
+                    };
+
+                    ctrlc::set_handler(handler.clone()).expect("Error setting Ctrl-C handler");
+
+                    let mut port = port.lock().unwrap();
                     if port.write_data_terminal_ready(true).is_ok() {
                         let mut serial_buf = [0; 1024];
                         loop {
-                            match port.read(&mut serial_buf) {
+                            let read = port.read(&mut serial_buf);
+                            match read {
                                 Ok(t) => {
                                     io::stdout().write_all(&serial_buf[..t])?;
                                     io::stdout().flush()?;
                                 }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+                                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
+                                    handler(); // Handler call must happen here as well, b/c on the off chance data is being transmitted in, and it is killed, it is seen as an interrupt
+                                    return Ok(());
+                                }
                                 Err(e) => return Err(e.into()),
                             }
                         }
