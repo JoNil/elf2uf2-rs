@@ -1,7 +1,7 @@
 use minifb::{Key, Scale, Window, WindowOptions};
 use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
 
-const WIDTH: usize = 360;
+const WIDTH: usize = 360 - 4;
 const HEIGHT: usize = 288;
 
 pub fn run() -> SyncSender<Vec<u8>> {
@@ -22,7 +22,7 @@ pub fn run() -> SyncSender<Vec<u8>> {
 
         window.set_target_fps(60);
 
-        let mut stride = 2 * 180;
+        let mut stride = 2 * 180 - 4;
         let mut offset = 0;
 
         let mut data = Vec::new();
