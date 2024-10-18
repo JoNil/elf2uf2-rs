@@ -2,7 +2,7 @@
 name = "elf2uf2-rs"
 version = "2.1.0"
 authors = ["Jonathan Nilsson <jonathan@voysys.se>"]
-edition = "2018"
+edition = "2021"
 
 description = "Port of elf2uf2 to rust"
 documentation = "https://docs.rs/elf2uf2-rs"
