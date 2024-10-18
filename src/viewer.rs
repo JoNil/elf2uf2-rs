@@ -2,7 +2,7 @@ use minifb::{Key, Scale, Window, WindowOptions};
 use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
 
 const WIDTH: usize = 360;
-const HEIGHT: usize = 288;
+const HEIGHT: usize = 287;
 
 pub fn run() -> SyncSender<Vec<u8>> {
     let (tx, rx) = sync_channel(2);
