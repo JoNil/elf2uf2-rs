@@ -1,10 +1,10 @@
+use crate::address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START};
 use address_range::{
     FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
 };
 use assert_into::AssertInto;
 use clap::Parser;
 use elf::{realize_page, AddressRangesExt, Elf32Header, PAGE_SIZE};
-use once_cell::sync::OnceCell;
 use pbr::{ProgressBar, Units};
 use static_assertions::const_assert;
 use std::{
@@ -13,16 +13,14 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
-    thread::sleep,
+    sync::OnceLock,
 };
-use sysinfo::{DiskExt, SystemExt};
+use sysinfo::Disks;
 use uf2::{
     Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT,
     UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
 };
-use zerocopy::AsBytes;
-
-use crate::address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START};
+use zerocopy::IntoBytes;
 
 mod address_range;
 mod elf;
@@ -65,7 +63,7 @@ impl Opts {
     }
 }
 
-static OPTS: OnceCell<Opts> = OnceCell::new();
+static OPTS: OnceLock<Opts> = OnceLock::new();
 
 fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
     let eh = Elf32Header::from_read(&mut input)?;
@@ -235,10 +233,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let input = BufReader::new(File::open(&Opts::global().input)?);
 
     let output = if Opts::global().deploy {
-        let sys = sysinfo::System::new_all();
+        let disks = Disks::new_with_refreshed_list();
 
         let mut pico_drive = None;
-        for disk in sys.disks() {
+        for disk in &disks {
             let mount = disk.mount_point();
 
             if mount.join("INFO_UF2.TXT").is_file() {

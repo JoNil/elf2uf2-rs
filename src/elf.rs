@@ -10,18 +10,17 @@ use std::{
     io::{Read, Seek, SeekFrom},
     mem,
 };
-use zerocopy::{AsBytes, FromBytes, FromZeroes};
+use zerocopy::{FromBytes, IntoBytes};
 
 const ELF_MAGIC: u32 = 0x464c457f;
-const EM_ARM: u16 = 0x28;
-const EF_ARM_ABI_FLOAT_HARD: u32 = 0x00000400;
 const PT_LOAD: u32 = 0x00000001;
 
 pub const LOG2_PAGE_SIZE: u32 = 8;
 pub const PAGE_SIZE: u32 = 1 << LOG2_PAGE_SIZE;
 
+#[allow(unused)]
 #[repr(packed)]
-#[derive(AsBytes, Copy, Clone, Default, Debug, FromBytes, FromZeroes)]
+#[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
 pub struct ElfHeader {
     pub magic: u32,
     pub arch_class: u8,
@@ -35,8 +34,9 @@ pub struct ElfHeader {
     pub version2: u32,
 }
 
+#[allow(unused)]
 #[repr(packed)]
-#[derive(AsBytes, Copy, Clone, Default, Debug, FromBytes, FromZeroes)]
+#[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
 pub struct Elf32Header {
     pub common: ElfHeader,
     pub entry: u32,
@@ -56,7 +56,7 @@ impl Elf32Header {
     pub(crate) fn from_read(input: &mut impl Read) -> Result<Self, Box<dyn Error>> {
         let mut eh = Elf32Header::default();
 
-        input.read_exact(eh.as_bytes_mut())?;
+        input.read_exact(eh.as_mut_bytes())?;
 
         if eh.common.magic != ELF_MAGIC {
             return Err("Not an ELF file".into());
@@ -86,7 +86,7 @@ impl Elf32Header {
         }
 
         let mut entries: Vec<Elf32PhEntry> = (0..self.ph_num).map(|_| Default::default()).collect();
-        input.read_exact(entries.as_mut_slice().as_bytes_mut())?;
+        input.read_exact(entries.as_mut_slice().as_mut_bytes())?;
 
         Ok(entries)
     }
@@ -117,8 +117,9 @@ impl Elf32Header {
     }
 }
 
+#[allow(unused)]
 #[repr(packed)]
-#[derive(AsBytes, Copy, Clone, Default, Debug, FromBytes, FromZeroes)]
+#[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
 pub struct Elf32PhEntry {
     pub typ: u32,
     pub offset: u32,

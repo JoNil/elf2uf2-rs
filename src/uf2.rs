@@ -2,7 +2,7 @@
 
 use static_assertions::const_assert;
 use std::mem;
-use zerocopy::{AsBytes, FromBytes, FromZeroes};
+use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 pub const UF2_MAGIC_START0: u32 = 0x0A324655;
 pub const UF2_MAGIC_START1: u32 = 0x9E5D5157;
@@ -16,7 +16,7 @@ pub const UF2_FLAG_MD5_PRESENT: u32 = 0x00004000;
 pub const RP2040_FAMILY_ID: u32 = 0xe48bff56;
 
 #[repr(packed)]
-#[derive(AsBytes, FromBytes, FromZeroes)]
+#[derive(IntoBytes, FromBytes, Immutable)]
 pub struct Uf2BlockHeader {
     pub magic_start0: u32,
     pub magic_start1: u32,
@@ -31,7 +31,7 @@ pub struct Uf2BlockHeader {
 pub type Uf2BlockData = [u8; 476];
 
 #[repr(packed)]
-#[derive(AsBytes, FromBytes, FromZeroes)]
+#[derive(IntoBytes, FromBytes, Immutable)]
 pub struct Uf2BlockFooter {
     pub magic_end: u32,
 }
