@@ -13,8 +13,6 @@ pub const UF2_FLAG_FILE_CONTAINER: u32 = 0x00001000;
 pub const UF2_FLAG_FAMILY_ID_PRESENT: u32 = 0x00002000;
 pub const UF2_FLAG_MD5_PRESENT: u32 = 0x00004000;
 
-pub const RP2040_FAMILY_ID: u32 = 0xe48bff56;
-
 #[repr(packed)]
 #[derive(AsBytes, FromBytes, FromZeroes)]
 pub struct Uf2BlockHeader {

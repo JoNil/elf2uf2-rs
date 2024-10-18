@@ -1,31 +1,46 @@
-use address_range::{
-    FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
-};
-use assert_into::AssertInto;
-use clap::Parser;
-use elf::{realize_page, AddressRangesExt, Elf32Header, PAGE_SIZE};
+use clap::{Parser, ValueEnum};
+use elf::{AddressRangesExt, realize_page, Elf32Header, PAGE_SIZE};
 use once_cell::sync::OnceCell;
 use pbr::{ProgressBar, Units};
-use static_assertions::const_assert;
+use assert_into::AssertInto;
 use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
-    io::{BufReader, Read, Seek, Write, BufWriter},
+    io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 use sysinfo::{DiskExt, SystemExt};
 use uf2::{
-    Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT,
+    Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, UF2_FLAG_FAMILY_ID_PRESENT,
     UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
 };
 use zerocopy::AsBytes;
 
-use crate::address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START};
+use crate::boards::BoardConfig;
 
+mod boards;
 mod address_range;
 mod elf;
 mod uf2;
+
+#[derive(Clone, ValueEnum, Debug)]
+enum Boards {
+    RP2040,
+    CircuitPlaygroundBluefruit
+}
+
+impl std::fmt::Display for Boards{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Default for Boards {
+    fn default() -> Self {
+        Boards::RP2040
+    }
+}
 
 #[derive(Parser, Debug, Default)]
 #[clap(author = "Jonathan Nilsson")]
@@ -48,6 +63,9 @@ struct Opts {
 
     /// Output file
     output: Option<String>,
+
+    #[clap(short, long, value_enum, default_value_t=Boards::RP2040)]
+    board: Boards
 }
 
 impl Opts {
@@ -68,6 +86,7 @@ static OPTS: OnceCell<Opts> = OnceCell::new();
 
 fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
     let eh = Elf32Header::from_read(&mut input)?;
+    let board_config = get_board_config();
 
     let entries = eh.read_elf32_ph_entries(&mut input)?;
 
@@ -84,12 +103,12 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
     }
 
     let valid_ranges = if ram_style {
-        RP2040_ADDRESS_RANGES_RAM
+        board_config.address_range_ram()
     } else {
-        RP2040_ADDRESS_RANGES_FLASH
+        board_config.address_ranges_flash()
     };
 
-    let mut pages = valid_ranges.check_elf32_ph_entries(&entries)?;
+    let mut pages = valid_ranges.iter().check_elf32_ph_entries(&entries)?;
 
     if pages.is_empty() {
         return Err("The input file has no memory pages".into());
@@ -101,9 +120,9 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
 
         #[allow(clippy::manual_range_contains)]
         pages.keys().copied().for_each(|addr| {
-            if addr >= MAIN_RAM_START && addr <= MAIN_RAM_END {
+            if addr >= board_config.main_ram_start() && addr <= board_config.main_ram_end() {
                 expected_ep_main_ram = expected_ep_main_ram.min(addr) | 0x1;
-            } else if addr >= XIP_SRAM_START && addr < XIP_SRAM_END {
+            } else if addr >= board_config.xip_ram_start() && addr < board_config.xip_ram_end() {
                 expected_ep_xip_sram = expected_ep_xip_sram.min(addr) | 0x1;
             }
         });
@@ -124,7 +143,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
             )
             .into());
         }
-        const_assert!(0 == (MAIN_RAM_START & (PAGE_SIZE - 1)));
+        assert!(0 == (board_config.main_ram_start() & (PAGE_SIZE - 1)));
 
         // TODO: check vector table start up
         // currently don't require this as entry point is now at the start, we don't know where reset vector is
@@ -136,14 +155,14 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
 
         let touched_sectors: HashSet<u32> = pages
             .keys()
-            .map(|addr| addr / FLASH_SECTOR_ERASE_SIZE)
+            .map(|addr| addr / board_config.flash_sector_erase_size())
             .collect();
 
         let last_page_addr = *pages.last_key_value().unwrap().0;
         for sector in touched_sectors {
-            let mut page = sector * FLASH_SECTOR_ERASE_SIZE;
+            let mut page = sector * board_config.flash_sector_erase_size();
 
-            while page < (sector + 1) * FLASH_SECTOR_ERASE_SIZE {
+            while page < (sector + 1) * board_config.flash_sector_erase_size() {
                 if page < last_page_addr && !pages.contains_key(&page) {
                     pages.insert(page, Vec::new());
                 }
@@ -160,7 +179,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         payload_size: PAGE_SIZE,
         block_no: 0,
         num_blocks: pages.len().assert_into(),
-        file_size: RP2040_FAMILY_ID,
+        file_size: board_config.family_id(),
     };
 
     let mut block_data: Uf2BlockData = [0; 476];
@@ -170,7 +189,8 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
     };
 
     if Opts::global().deploy {
-        println!("Transfering program to pico");
+        let board_name = &Opts::global().board;
+        println!("Transfering program to {board_name}");
     }
 
     let mut pb = if !Opts::global().verbose && Opts::global().deploy {
@@ -224,6 +244,18 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
     Ok(())
 }
 
+fn get_board_config() -> Box<dyn BoardConfig> {
+    let board_config: Box<dyn BoardConfig> = match &Opts::global().board {
+        Boards::RP2040 => {
+            Box::new(boards::rp2040::RP2040{})
+        }
+        Boards::CircuitPlaygroundBluefruit => {
+            Box::new(boards::circuit_playground_bluefruit::CircuitPlaygroundBluefruit{})
+        }
+    };
+    board_config
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     OPTS.set(Opts::parse()).unwrap();
 
@@ -237,11 +269,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let sys = sysinfo::System::new_all();
 
         let mut pico_drive = None;
+        let board_name = &Opts::global().board;
         for disk in sys.disks() {
             let mount = disk.mount_point();
 
-            if mount.join("INFO_UF2.TXT").is_file() {
-                println!("Found pico uf2 disk {}", &mount.to_string_lossy());
+            if mount.join("INFO_UF2.TXT").is_file() {                
+                println!("Found {board_name} uf2 disk {}", &mount.to_string_lossy());
                 pico_drive = Some(mount.to_owned());
                 break;
             }
@@ -276,10 +309,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let mut counter = 0;
 
+        let board_name = &Opts::global().board;
         let serial_port_info = 'find_loop: loop {
             for port in serialport::available_ports()? {
                 if !serial_ports_before.contains(&port) {
-                    println!("Found pico serial on {}", &port.port_name);
+                    println!("Found {board_name} serial on {}", &port.port_name);
                     break 'find_loop Some(port);
                 }
             }

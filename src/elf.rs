@@ -1,6 +1,5 @@
 use crate::{
-    address_range::{self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM},
-    Opts,
+    address_range::{self, AddressRange}, boards::BoardConfig, get_board_config, Opts
 };
 use assert_into::AssertInto;
 use std::{
@@ -101,9 +100,10 @@ impl Elf32Header {
                     // so call THAT a flash binary
                     if self.entry >= entry.vaddr && self.entry < entry.vaddr + mapped_size {
                         let effective_entry = self.entry + entry.paddr - entry.vaddr;
-                        if RP2040_ADDRESS_RANGES_RAM.is_address_initialized(effective_entry) {
+                        let board_config: Box<dyn BoardConfig> = get_board_config();
+                        if board_config.address_range_ram().iter().is_address_initialized(effective_entry) {
                             return Some(true);
-                        } else if RP2040_ADDRESS_RANGES_FLASH
+                        } else if board_config.address_ranges_flash().iter()
                             .is_address_initialized(effective_entry)
                         {
                             return Some(false);
