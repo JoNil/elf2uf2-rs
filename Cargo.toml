@@ -19,6 +19,7 @@ serialport = { version = "4", optional = true }
 static_assertions = "1"
 sysinfo = "0.29"
 zerocopy = { version = "0.7", features = ["derive"] }
+ctrlc = "3.4"
 
 [features]
 default = ["serial"]
