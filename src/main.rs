@@ -42,6 +42,11 @@ struct Opts {
     #[clap(short, long)]
     serial: bool,
 
+    /// Send termination message to the device on ctrl+c
+    #[cfg(feature = "serial")]
+    #[clap(short, long)]
+    term: bool,
+
     /// Input file
     input: String,
 
@@ -313,7 +318,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
                     };
 
-                    ctrlc::set_handler(handler.clone()).expect("Error setting Ctrl-C handler");
+                    if Opts::global().term {
+                        ctrlc::set_handler(handler.clone()).expect("Error setting Ctrl-C handler");
+                    }
 
                     let data_terminal_ready_succeeded = {
                         let mut port = port.lock().unwrap();
@@ -333,9 +340,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     io::stdout().flush()?;
                                 }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
-                                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
-                                    handler();
-                                    return Ok(());
+                                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                                    if Opts::global().term {
+                                        handler();
+                                    }
+                                    return Err(e.into());
                                 }
                                 Err(e) => return Err(e.into()),
                             }
