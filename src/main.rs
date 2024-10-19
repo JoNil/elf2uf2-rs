@@ -302,21 +302,31 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .open()
                 {
                     let port = Arc::new(Mutex::new(port));
-                    let port_clone = Arc::clone(&port);
 
-                    let handler = move || {
-                        let mut port = port_clone.lock().unwrap();
-                        let _ = port.write_all(b"elf2uf2-term\n\r");
-                        process::exit(0);
+                    let handler = {
+                        let port = port.clone();
+                        move || {
+                            let mut port = port.lock().unwrap();
+                            port.write_all(b"elf2uf2-term\n\r").ok();
+                            port.flush().ok();
+                            process::exit(0);
+                        }
                     };
 
                     ctrlc::set_handler(handler.clone()).expect("Error setting Ctrl-C handler");
 
-                    let mut port = port.lock().unwrap();
-                    if port.write_data_terminal_ready(true).is_ok() {
+                    let data_terminal_ready_succeeded = {
+                        let mut port = port.lock().unwrap();
+                        port.write_data_terminal_ready(true).is_ok()
+                    };
+                    if data_terminal_ready_succeeded {
                         let mut serial_buf = [0; 1024];
                         loop {
-                            let read = port.read(&mut serial_buf);
+                            let read = {
+                                let mut port = port.lock().unwrap();
+                                port.read(&mut serial_buf)
+                            };
+
                             match read {
                                 Ok(t) => {
                                     io::stdout().write_all(&serial_buf[..t])?;
@@ -324,7 +334,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
                                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
-                                    handler(); // Handler call must happen here as well, b/c on the off chance data is being transmitted in, and it is killed, it is seen as an interrupt
+                                    handler();
                                     return Ok(());
                                 }
                                 Err(e) => return Err(e.into()),
