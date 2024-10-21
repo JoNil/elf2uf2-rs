@@ -1,5 +1,8 @@
 use minifb::{Key, Scale, Window, WindowOptions};
-use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
+use std::{
+    sync::mpsc::{sync_channel, SyncSender, TryRecvError},
+    time::Instant,
+};
 
 use image_tracker_rs::{BoundingBox, Feature};
 
@@ -54,6 +57,8 @@ pub fn run() -> SyncSender<Vec<u8>> {
                             &bb,
                         );
                     } else {
+                        let start_time = Instant::now();
+
                         image_tracker_rs::track_features::<SIZE>(
                             &mut tc,
                             &last_data,
@@ -103,12 +108,15 @@ pub fn run() -> SyncSender<Vec<u8>> {
 
                         let good_feature_count2 = fl.iter().filter(|f| f.val >= 0).count();
 
+                        let elapsed = start_time.elapsed().as_secs_f32() * 1000.0;
+
                         println!(
-                            "{} {} {} {}",
+                            "{} {} {} {} {:.1}",
                             bb.center_x(),
                             bb.center_y(),
                             good_feature_count,
                             good_feature_count2,
+                            elapsed
                         );
 
                         if good_feature_count2 < 2 {
