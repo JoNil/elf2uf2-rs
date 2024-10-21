@@ -1,13 +1,19 @@
 use minifb::{Key, Scale, Window, WindowOptions};
 use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
 
+use image_tracker_rs::{BoundingBox, Feature};
+
 const WIDTH: usize = 360;
 const HEIGHT: usize = 287;
+const SIZE: usize = WIDTH * HEIGHT;
 
 pub fn run() -> SyncSender<Vec<u8>> {
     let (tx, rx) = sync_channel(2);
 
     std::thread::spawn(move || {
+        let mut tc = image_tracker_rs::create_tracking_context_with_settings(5, 5, 5, false);
+        let mut fl = [Feature::default(); 10];
+
         let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
 
         let options = WindowOptions {
@@ -26,6 +32,7 @@ pub fn run() -> SyncSender<Vec<u8>> {
         let mut offset: i32 = 0;
 
         let mut data = Vec::new();
+        let mut last_data = Vec::new();
 
         while window.is_open() && !window.is_key_down(Key::Escape) {
             buffer.fill(0);
@@ -38,6 +45,71 @@ pub fn run() -> SyncSender<Vec<u8>> {
                 _ => (),
             }
 
+            if data.len() > 0 {
+                if last_data.len() != data.len() {
+                    let bb = BoundingBox::from_center_width_height(
+                        WIDTH as i32 / 2,
+                        HEIGHT as i32 / 2,
+                        32,
+                        32,
+                    );
+
+                    image_tracker_rs::select_good_features(
+                        &mut tc,
+                        &data,
+                        WIDTH as _,
+                        HEIGHT as _,
+                        &mut fl,
+                        &bb,
+                    );
+                } else {
+                    image_tracker_rs::track_features::<SIZE>(
+                        &mut tc,
+                        &last_data,
+                        &data,
+                        WIDTH as _,
+                        HEIGHT as _,
+                        &mut fl,
+                    );
+
+                    let count = fl.iter().filter(|f| f.val >= 0).count();
+
+                    let average_x =
+                        fl.iter().filter(|f| f.val >= 0).map(|f| f.x).sum::<f32>() / count as f32;
+                    let average_y =
+                        fl.iter().filter(|f| f.val >= 0).map(|f| f.y).sum::<f32>() / count as f32;
+
+                    for feature in &mut fl {
+                        if (feature.x - average_x).abs() > 16.0
+                            || (feature.y - average_y).abs() > 16.0
+                        {
+                            feature.x = -1.0;
+                            feature.y = -1.0;
+                            feature.val = -1;
+                        }
+                    }
+
+                    let bb = BoundingBox::from_center_width_height(
+                        average_x as i32,
+                        average_y as i32,
+                        32,
+                        32,
+                    )
+                    .clamp(WIDTH as _, HEIGHT as _);
+
+                    image_tracker_rs::replace_lost_features(
+                        &mut tc,
+                        &data,
+                        WIDTH as _,
+                        HEIGHT as _,
+                        &mut fl,
+                        &bb,
+                    );
+                }
+
+                last_data = data.clone();
+            }
+
             for (y, line) in data[offset as usize..].chunks(stride as usize).enumerate() {
                 for (x, value) in line.iter().enumerate() {
                     if x + y * WIDTH < buffer.len() {
@@ -45,6 +117,27 @@ pub fn run() -> SyncSender<Vec<u8>> {
                             (*value as u32) << 16 | (*value as u32) << 8 | (*value as u32);
                     }
                 }
+            }
+
+            for (x, y) in [
+                (WIDTH / 2, HEIGHT / 2),
+                (WIDTH / 2 + 1, HEIGHT / 2),
+                (WIDTH / 2 - 1, HEIGHT / 2),
+                (WIDTH / 2, HEIGHT / 2 - 1),
+                (WIDTH / 2, HEIGHT / 2 + 1),
+                (WIDTH / 2 + 2, HEIGHT / 2),
+                (WIDTH / 2 - 2, HEIGHT / 2),
+                (WIDTH / 2, HEIGHT / 2 - 2),
+                (WIDTH / 2, HEIGHT / 2 + 2),
+            ] {
+                buffer[x + y * WIDTH] = 0x000ff000;
+            }
+
+            for feature in &fl {
+                let x = feature.x as usize;
+                let y = feature.y as usize;
+
+                buffer[x + y * WIDTH] = 0x00ff0000;
             }
 
             if window.is_key_pressed(Key::S, minifb::KeyRepeat::Yes) {
@@ -69,6 +162,26 @@ pub fn run() -> SyncSender<Vec<u8>> {
                 offset = (offset - 1).max(0);
 
                 println!("Stride: {stride}, Offset: {offset}");
+            }
+
+            if window.is_key_pressed(Key::D, minifb::KeyRepeat::No) {
+                fl.fill(Default::default());
+
+                let bb = BoundingBox::from_center_width_height(
+                    WIDTH as i32 / 2,
+                    HEIGHT as i32 / 2,
+                    32,
+                    32,
+                );
+
+                image_tracker_rs::select_good_features(
+                    &mut tc,
+                    &data,
+                    WIDTH as _,
+                    HEIGHT as _,
+                    &mut fl,
+                    &bb,
+                );
             }
 
             window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
