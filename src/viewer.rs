@@ -164,7 +164,7 @@ pub fn run() -> SyncSender<Vec<u8>> {
                 println!("Stride: {stride}, Offset: {offset}");
             }
 
-            if window.is_key_pressed(Key::D, minifb::KeyRepeat::No) {
+            if window.is_key_pressed(Key::B, minifb::KeyRepeat::No) {
                 fl.fill(Default::default());
 
                 let bb = BoundingBox::from_center_width_height(
