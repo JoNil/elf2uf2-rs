@@ -4,11 +4,10 @@ use std::{
     time::Instant,
 };
 
-use image_tracker_rs::{BoundingBox, Feature};
+use image_tracker_rs::{mem, BoundingBox, Feature};
 
 const WIDTH: usize = 360;
 const HEIGHT: usize = 287;
-const SIZE: usize = WIDTH * HEIGHT;
 
 pub fn run() -> SyncSender<Vec<u8>> {
     let (tx, rx) = sync_channel(2);
@@ -48,6 +47,8 @@ pub fn run() -> SyncSender<Vec<u8>> {
                     data = new_data;
 
                     if last_data.len() != data.len() {
+                        mem::mark();
+
                         image_tracker_rs::select_good_features(
                             &mut tc,
                             &data,
@@ -56,10 +57,14 @@ pub fn run() -> SyncSender<Vec<u8>> {
                             &mut fl,
                             &bb,
                         );
+
+                        mem::print_max_allocated();
                     } else {
+                        mem::mark();
+
                         let start_time = Instant::now();
 
-                        image_tracker_rs::track_features::<SIZE>(
+                        image_tracker_rs::track_features::<{ 48 * 48 }>(
                             &mut tc,
                             &last_data,
                             &data,
@@ -109,6 +114,8 @@ pub fn run() -> SyncSender<Vec<u8>> {
                         let good_feature_count2 = fl.iter().filter(|f| f.val >= 0).count();
 
                         let elapsed = start_time.elapsed().as_secs_f32() * 1000.0;
+
+                        mem::print_max_allocated();
 
                         println!(
                             "{} {} {} {} {:.1}",
