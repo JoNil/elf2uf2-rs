@@ -4,8 +4,17 @@ use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
 const WIDTH: usize = 360;
 const HEIGHT: usize = 287;
 
-pub fn run() -> SyncSender<Vec<u8>> {
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct Feature {
+    pub x: f32,
+    pub y: f32,
+    pub val: i32,
+}
+
+pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
     let (tx, rx) = sync_channel(2);
+    let (feature_tx, feature_rx) = sync_channel(2);
 
     std::thread::spawn(move || {
         let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
@@ -26,6 +35,7 @@ pub fn run() -> SyncSender<Vec<u8>> {
         let mut offset: i32 = 0;
 
         let mut data = Vec::new();
+        let mut fl: Vec<Feature> = Vec::new();
 
         while window.is_open() && !window.is_key_down(Key::Escape) {
             buffer.fill(0);
@@ -33,6 +43,16 @@ pub fn run() -> SyncSender<Vec<u8>> {
             match rx.try_recv() {
                 Ok(new_data) => {
                     data = new_data;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    break;
+                }
+                _ => (),
+            }
+
+            match feature_rx.try_recv() {
+                Ok(new_fl) => {
+                    fl = new_fl;
                 }
                 Err(TryRecvError::Disconnected) => {
                     break;
@@ -63,6 +83,13 @@ pub fn run() -> SyncSender<Vec<u8>> {
                 buffer[x + y * WIDTH] = 0x000ff000;
             }
 
+            for feature in &fl {
+                let x = feature.x as usize;
+                let y = feature.y as usize;
+
+                buffer[x + y * WIDTH] = 0x00ff0000;
+            }
+
             if window.is_key_pressed(Key::S, minifb::KeyRepeat::Yes) {
                 stride += 1;
 
@@ -91,5 +118,5 @@ pub fn run() -> SyncSender<Vec<u8>> {
         }
     });
 
-    tx
+    (tx, feature_tx)
 }

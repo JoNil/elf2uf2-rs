@@ -13,14 +13,15 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, Write},
     path::{Path, PathBuf},
-    sync::mpsc::TrySendError,
-    sync::OnceLock,
+    slice,
+    sync::{mpsc::TrySendError, OnceLock},
 };
 use sysinfo::Disks;
 use uf2::{
     Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT,
     UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
 };
+use viewer::Feature;
 use zerocopy::IntoBytes;
 
 mod address_range;
@@ -275,7 +276,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // New line after progress bar
     println!();
 
-    let viewer_tx = viewer::run();
+    let (viewer_tx, feature_tx) = viewer::run();
 
     #[cfg(feature = "serial")]
     if Opts::global().serial {
@@ -397,6 +398,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                                             } else if message_type == 2 {
                                                 io::stdout().write_all(&buffer)?;
                                                 io::stdout().flush()?;
+                                            } else if message_type == 3 {
+                                                if let Err(TrySendError::Disconnected(_)) =
+                                                    feature_tx.try_send(unsafe {
+                                                        slice::from_raw_parts(
+                                                            buffer.as_ptr() as *const Feature,
+                                                            buffer.len() / (3 * 4),
+                                                        )
+                                                        .to_vec()
+                                                    })
+                                                {
+                                                    if Opts::global().term {
+                                                        handler();
+                                                    }
+                                                    return Err("Viewer exited".into());
+                                                }
                                             }
                                         }
                                     }
