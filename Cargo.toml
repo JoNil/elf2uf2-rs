@@ -20,7 +20,6 @@ sysinfo = "0.32"
 zerocopy = { version = "0.8", features = ["derive"] }
 ctrlc = "3.4"
 minifb = "0.27"
-image-tracker-rs = { path = "../image-tracker-rs", features = ["std"] }
 
 [features]
 default = ["serial"]
