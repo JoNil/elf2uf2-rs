@@ -19,7 +19,7 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
     std::thread::spawn(move || {
         let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
 
-        let options = WindowOptions {
+        let mut options = WindowOptions {
             scale: Scale::X4,
             ..Default::default()
         };
@@ -33,6 +33,7 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
 
         let mut stride: i32 = 2 * 180;
         let mut offset: i32 = 0;
+        let mut crosshair = true;
 
         let mut data = Vec::new();
         let mut fl: Vec<Feature> = Vec::new();
@@ -69,18 +70,20 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
                 }
             }
 
-            for (x, y) in [
-                (WIDTH / 2, HEIGHT / 2),
-                (WIDTH / 2 + 1, HEIGHT / 2),
-                (WIDTH / 2 - 1, HEIGHT / 2),
-                (WIDTH / 2, HEIGHT / 2 - 1),
-                (WIDTH / 2, HEIGHT / 2 + 1),
-                (WIDTH / 2 + 2, HEIGHT / 2),
-                (WIDTH / 2 - 2, HEIGHT / 2),
-                (WIDTH / 2, HEIGHT / 2 - 2),
-                (WIDTH / 2, HEIGHT / 2 + 2),
-            ] {
-                buffer[x + y * WIDTH] = 0x000ff000;
+            if crosshair {
+                for (x, y) in [
+                    (WIDTH / 2, HEIGHT / 2),
+                    (WIDTH / 2 + 1, HEIGHT / 2),
+                    (WIDTH / 2 - 1, HEIGHT / 2),
+                    (WIDTH / 2, HEIGHT / 2 - 1),
+                    (WIDTH / 2, HEIGHT / 2 + 1),
+                    (WIDTH / 2 + 2, HEIGHT / 2),
+                    (WIDTH / 2 - 2, HEIGHT / 2),
+                    (WIDTH / 2, HEIGHT / 2 - 2),
+                    (WIDTH / 2, HEIGHT / 2 + 2),
+                ] {
+                    buffer[x + y * WIDTH] = 0x000ff000;
+                }
             }
 
             for feature in &fl {
@@ -112,6 +115,23 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
                 offset = (offset - 1).max(0);
 
                 println!("Stride: {stride}, Offset: {offset}");
+            }
+
+            if window.is_key_pressed(Key::K, minifb::KeyRepeat::No) {
+                crosshair = !crosshair;
+            }
+
+            if window.is_key_pressed(Key::L, minifb::KeyRepeat::No) {
+                if matches!(options.scale, Scale::X4) {
+                    options.scale = Scale::X1;
+                } else {
+                    options.scale = Scale::X4;
+                }
+
+                window = Window::new("Viewer - ESC to exit", WIDTH, HEIGHT, options)
+                    .unwrap_or_else(|e| {
+                        panic!("{}", e);
+                    });
             }
 
             window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
