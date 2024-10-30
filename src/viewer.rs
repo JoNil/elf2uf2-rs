@@ -7,8 +7,8 @@ const HEIGHT: usize = 287;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Feature {
-    pub x: f32,
-    pub y: f32,
+    pub x: i32,
+    pub y: i32,
     pub val: i32,
 }
 
