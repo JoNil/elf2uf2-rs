@@ -90,7 +90,11 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
                 let x = feature.x as usize;
                 let y = feature.y as usize;
 
-                buffer[x + y * WIDTH] = 0x00ff0000;
+                if feature.val == -1 {
+                    buffer[x + y * WIDTH] = 0x00ff0000;
+                } else {
+                    buffer[x + y * WIDTH] = 0x000000ff;
+                }
             }
 
             if window.is_key_pressed(Key::S, minifb::KeyRepeat::Yes) {
