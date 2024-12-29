@@ -13,13 +13,13 @@ repository = "https://github.com/JoNil/elf2uf2-rs"
 [dependencies]
 assert_into = "1.1"
 clap = { version = "4", features = ["derive"] }
+ctrlc = "3.4"
+minifb = "0.27"
 pbr = "1"
 serialport = { version = "4", optional = true }
 static_assertions = "1"
 sysinfo = "0.32"
 zerocopy = { version = "0.8", features = ["derive"] }
-ctrlc = "3.4"
-minifb = "0.27"
 
 [features]
 default = ["serial"]

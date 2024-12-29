@@ -1,5 +1,8 @@
 use minifb::{Key, Scale, Window, WindowOptions};
-use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
+use std::{
+    fs,
+    sync::mpsc::{sync_channel, SyncSender, TryRecvError},
+};
 
 const WIDTH: usize = 360;
 const HEIGHT: usize = 287;
@@ -37,6 +40,8 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
 
         let mut data = Vec::new();
         let mut fl: Vec<Feature> = Vec::new();
+        let mut image_count = 0;
+        let mut save_image = false;
 
         while window.is_open() && !window.is_key_down(Key::Escape) {
             buffer.fill(0);
@@ -44,6 +49,15 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
             match rx.try_recv() {
                 Ok(new_data) => {
                     data = new_data;
+
+                    if save_image {
+                        fs::write(
+                            format!("C:/Users/LordJ/Desktop/images/{image_count}.bimg"),
+                            &data,
+                        )
+                        .ok();
+                        image_count += 1;
+                    }
                 }
                 Err(TryRecvError::Disconnected) => {
                     break;
@@ -90,10 +104,12 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
                 let x = feature.x as usize;
                 let y = feature.y as usize;
 
-                if feature.val == -1 {
-                    buffer[x + y * WIDTH] = 0x00ff0000;
-                } else {
-                    buffer[x + y * WIDTH] = 0x000000ff;
+                if (0..WIDTH).contains(&x) && (0..HEIGHT).contains(&y) {
+                    if feature.val == -1 {
+                        buffer[x + y * WIDTH] = 0x00ff0000;
+                    } else {
+                        buffer[x + y * WIDTH] = 0x000000ff;
+                    }
                 }
             }
 
@@ -124,6 +140,8 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
             if window.is_key_pressed(Key::K, minifb::KeyRepeat::No) {
                 crosshair = !crosshair;
             }
+
+            save_image = window.is_key_down(Key::Space);
 
             if window.is_key_pressed(Key::L, minifb::KeyRepeat::No) {
                 if matches!(options.scale, Scale::X4) {
