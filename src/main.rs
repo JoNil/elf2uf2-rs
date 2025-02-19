@@ -37,6 +37,10 @@ struct Opts {
     #[clap(short, long)]
     deploy: bool,
 
+    /// Select family ID for UF2. See https://github.com/microsoft/uf2/blob/master/utils/uf2families.json for list.
+    #[clap(short, long, default_value_t = RP2040_FAMILY_ID, value_parser = num_parser)]
+    family: u32,
+
     /// Connect to serial after deploy
     #[cfg(feature = "serial")]
     #[clap(short, long)]
@@ -52,6 +56,15 @@ struct Opts {
 
     /// Output file
     output: Option<String>,
+}
+
+// allow user to pass hex formatted numbers (typically the format used by family ids)
+fn num_parser(s: &str) -> Result<u32, &'static str> {
+    match s.get(0..2) {
+        Some("0x") => u32::from_str_radix(&s[2..], 16).map_err(|_| "invalid hex number"),
+        Some("0b") => u32::from_str_radix(&s[2..], 2).map_err(|_| "invalid binary number"),
+        _ => s.parse::<u32>().map_err(|_| "invalid decimal number"),
+    }
 }
 
 impl Opts {
@@ -70,7 +83,11 @@ impl Opts {
 
 static OPTS: OnceLock<Opts> = OnceLock::new();
 
-fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
+fn elf2uf2(
+    mut input: impl Read + Seek,
+    mut output: impl Write,
+    family_id: u32,
+) -> Result<(), Box<dyn Error>> {
     let eh = Elf32Header::from_read(&mut input)?;
 
     let entries = eh.read_elf32_ph_entries(&mut input)?;
@@ -164,7 +181,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         payload_size: PAGE_SIZE,
         block_no: 0,
         num_blocks: pages.len().assert_into(),
-        file_size: RP2040_FAMILY_ID,
+        file_size: family_id,
     };
 
     let mut block_data: Uf2BlockData = [0; 476];
@@ -261,7 +278,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         File::create(Opts::global().output_path())?
     };
 
-    if let Err(err) = elf2uf2(input, BufWriter::new(output)) {
+    let family_id = Opts::global().family;
+    if Opts::global().verbose {
+        println!("Using UF2 Family ID 0x{:x}", family_id);
+    }
+
+    if let Err(err) = elf2uf2(input, BufWriter::new(output), family_id) {
         if Opts::global().deploy {
             fs::remove_file(deployed_path.unwrap())?;
         } else {
@@ -373,7 +395,7 @@ mod tests {
 
         let bytes_in = io::Cursor::new(&include_bytes!("../hello_usb.elf")[..]);
         let mut bytes_out = Vec::new();
-        elf2uf2(bytes_in, &mut bytes_out).unwrap();
+        elf2uf2(bytes_in, &mut bytes_out, RP2040_FAMILY_ID).unwrap();
 
         assert_eq!(bytes_out, include_bytes!("../hello_usb.uf2"));
     }
@@ -386,7 +408,7 @@ mod tests {
 
         let bytes_in = io::Cursor::new(&include_bytes!("../hello_serial.elf")[..]);
         let mut bytes_out = Vec::new();
-        elf2uf2(bytes_in, &mut bytes_out).unwrap();
+        elf2uf2(bytes_in, &mut bytes_out, RP2040_FAMILY_ID).unwrap();
 
         assert_eq!(bytes_out, include_bytes!("../hello_serial.uf2"));
     }
