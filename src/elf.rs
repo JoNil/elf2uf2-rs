@@ -70,8 +70,8 @@ impl Elf32Header {
         if eh.eh_size != mem::size_of::<Elf32Header>().assert_into() {
             return Err("Invalid ELF32 format".into());
         }
-        if eh.common.abi != 0 {
-            return Err("Unrecognized ABI".into());
+        if eh.common.abi != 0 && eh.common.abi != 3 {
+            return Err(format!("Unrecognized ABI {}", eh.common.abi).into());
         }
 
         Ok(eh)
