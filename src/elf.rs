@@ -19,7 +19,7 @@ pub const LOG2_PAGE_SIZE: u32 = 8;
 pub const PAGE_SIZE: u32 = 1 << LOG2_PAGE_SIZE;
 
 #[allow(unused)]
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
 pub struct ElfHeader {
     pub magic: u32,
@@ -35,7 +35,7 @@ pub struct ElfHeader {
 }
 
 #[allow(unused)]
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
 pub struct Elf32Header {
     pub common: ElfHeader,
@@ -118,7 +118,7 @@ impl Elf32Header {
 }
 
 #[allow(unused)]
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
 pub struct Elf32PhEntry {
     pub typ: u32,
