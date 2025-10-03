@@ -312,7 +312,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         let port = port.clone();
                         move || {
                             let mut port = port.lock().unwrap();
-                            port.write_all(b"elf2uf2-term\n\r").ok();
+                            port.write_all(b"elf2uf2-term\r\n").ok();
                             port.flush().ok();
                             process::exit(0);
                         }
