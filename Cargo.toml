@@ -1,6 +1,6 @@
 [package]
 name = "elf2uf2-rs"
-version = "2.1.1"
+version = "2.2.0"
 authors = ["Jonathan Nilsson <jonathan@voysys.se>"]
 edition = "2021"
 
