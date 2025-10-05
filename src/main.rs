@@ -241,13 +241,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         let disks = Disks::new_with_refreshed_list();
 
         let mut pico_drive = None;
-        for disk in &disks {
-            let mount = disk.mount_point();
+        if Path::new(r"/mnt/chromeos/removable/RPI-RP2").is_dir() {
+            pico_drive = Some(PathBuf::from(r"/mnt/chromeos/removable/RPI-RP2"));
+        } else {
+            for disk in &disks {
+                let mount = disk.mount_point();
 
-            if mount.join("INFO_UF2.TXT").is_file() {
-                println!("Found pico uf2 disk {}", &mount.to_string_lossy());
-                pico_drive = Some(mount.to_owned());
-                break;
+                if mount.join("INFO_UF2.TXT").is_file() {
+                    println!("Found pico uf2 disk {}", &mount.to_string_lossy());
+                    pico_drive = Some(mount.to_owned());
+                    break;
+                }
             }
         }
 
