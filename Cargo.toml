@@ -1,25 +1,16 @@
-[package]
-name = "elf2uf2-rs"
+[workspace]
+resolver = "3"
+
+members = ["crates/*"]
+default-members = ["crates/elf2uf2-rs"]
+
+[workspace.package]
 version = "2.2.0"
 authors = ["Jonathan Nilsson <jonathan@voysys.se>"]
-edition = "2021"
-
-description = "Port of elf2uf2 to rust"
-documentation = "https://docs.rs/elf2uf2-rs"
-readme = "README.md"
+edition = "2024"
 license = "0BSD"
-repository = "https://github.com/JoNil/elf2uf2-rs"
+readme = "README.md"
 
-[dependencies]
-assert_into = "1.1"
-clap = { version = "4", features = ["derive"] }
-pbr = "1"
-serialport = { version = "4", optional = true }
-static_assertions = "1"
-sysinfo = "0.32"
-zerocopy = { version = "0.8", features = ["derive"] }
-ctrlc = "3.4"
-
-[features]
-default = ["serial"]
-serial = ["serialport"]
+[workspace.dependencies]
+log = "0.4"
+thiserror = "2"
