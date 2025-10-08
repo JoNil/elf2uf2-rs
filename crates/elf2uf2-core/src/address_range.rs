@@ -1,8 +1,5 @@
-use std::io::{Read, Seek};
 
-use elf::{abi::PT_LOAD, endian::EndianParse, ElfStream};
 
-use crate::elf::AddressRangesFromElfError;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AddressRangeType {

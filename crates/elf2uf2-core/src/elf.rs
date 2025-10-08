@@ -1,25 +1,22 @@
-use crate::{
-    address_range::{self, AddressRange, AddressRangeType, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM},
+use crate::address_range::{
+    self, AddressRange, AddressRangeType, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
 };
 use assert_into::AssertInto;
-use elf::{abi::PT_LOAD, endian::EndianParse, ElfStream};
+use elf::{ElfStream, abi::PT_LOAD, endian::EndianParse};
 use log::debug;
-use thiserror::Error;
 use std::{
     cmp::min,
     collections::BTreeMap,
     io::{Read, Seek, SeekFrom},
 };
+use thiserror::Error;
 
 pub const LOG2_PAGE_SIZE: u64 = 8;
 pub const PAGE_SIZE: u64 = 1 << LOG2_PAGE_SIZE;
 
-
 // "determine_binary_type"
-pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(
-	file: &ElfStream<E, S>,
-) -> Option<bool> {
-	let entry = file.ehdr.e_entry;
+pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(file: &ElfStream<E, S>) -> Option<bool> {
+    let entry = file.ehdr.e_entry;
 
     for segment in file.segments() {
         if segment.p_type == PT_LOAD && segment.p_memsz > 0 {
@@ -31,9 +28,7 @@ pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(
                     let effective_entry = entry + segment.p_paddr - segment.p_vaddr;
                     if RP2040_ADDRESS_RANGES_RAM.is_address_initialized(effective_entry) {
                         return Some(true);
-                    } else if RP2040_ADDRESS_RANGES_FLASH
-                        .is_address_initialized(effective_entry)
-                    {
+                    } else if RP2040_ADDRESS_RANGES_FLASH.is_address_initialized(effective_entry) {
                         return Some(false);
                     }
                 }
@@ -73,7 +68,7 @@ pub fn realize_page(
 
 #[derive(Error, Debug)]
 pub enum AddressRangesFromElfError {
-	#[error("No segments in ELF")]
+    #[error("No segments in ELF")]
     NoSegments,
     #[error("In memory segments overlap")]
     MemorySegmentsOverlap,
@@ -82,7 +77,6 @@ pub enum AddressRangesFromElfError {
     #[error("Memory segment {0:#08x}->{1:#08x} is outside of valid address range for device")]
     MemorySegmentInvalidForDevice(u64, u64),
 }
-
 
 pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
     fn range_for(&self, addr: u64) -> Option<&'a AddressRange> {
@@ -112,7 +106,9 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
         for range in self.clone().into_iter() {
             if range.from <= addr && range.to >= addr + size {
                 if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
-                    return Err(AddressRangesFromElfError::MemoryContentsForUninitializedMemory(addr));
+                    return Err(
+                        AddressRangesFromElfError::MemoryContentsForUninitializedMemory(addr),
+                    );
                 }
                 debug!(
                     "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
@@ -131,7 +127,7 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
         }
         Err(AddressRangesFromElfError::MemorySegmentInvalidForDevice(
             addr,
-            addr + size
+            addr + size,
         ))
     }
 }
@@ -139,8 +135,7 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
 pub fn address_ranges_from_elf<E: EndianParse, S: Read + Seek>(
     file: &ElfStream<E, S>,
 ) -> Result<Vec<AddressRange>, AddressRangesFromElfError> {
-    let segments = file
-        .segments();
+    let segments = file.segments();
 
     let mut ranges = Vec::new();
 
@@ -174,68 +169,67 @@ pub fn address_ranges_from_elf<E: EndianParse, S: Read + Seek>(
     Ok(ranges)
 }
 
-
 pub fn get_page_fragments<E: EndianParse, S: Read + Seek>(
     file: &ElfStream<E, S>,
-    ranges:  &[AddressRange],
+    ranges: &[AddressRange],
     page_size: u64,
 ) -> Result<BTreeMap<u64, Vec<PageFragment>>, AddressRangesFromElfError> {
     let mut pages = BTreeMap::<u64, Vec<PageFragment>>::new();
 
     for segment in file.segments() {
-	    if segment.p_type != PT_LOAD || segment.p_memsz == 0 {
-	        continue;
-	    }
-            let mapped_size = min(segment.p_filesz, segment.p_memsz);
+        if segment.p_type != PT_LOAD || segment.p_memsz == 0 {
+            continue;
+        }
+        let mapped_size = min(segment.p_filesz, segment.p_memsz);
 
-            if mapped_size > 0 {
-                let ar =
-                    ranges.check_address_range(segment.p_paddr, segment.p_vaddr, mapped_size, false)?;
+        if mapped_size > 0 {
+            let ar =
+                ranges.check_address_range(segment.p_paddr, segment.p_vaddr, mapped_size, false)?;
 
-                // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
-                if ar.typ != address_range::AddressRangeType::Contents {
-                    debug!("ignored");
-                    continue;
-                }
-                let mut addr = segment.p_paddr;
-                let mut remaining = mapped_size;
-                let mut file_offset = segment.p_offset;
-                while remaining > 0 {
-                    let off = addr & (page_size - 1);
-                    let len = min(remaining, page_size - off);
-
-                    // list of fragments
-                    let fragments = pages.entry(addr - off).or_default();
-
-                    // note if filesz is zero, we want zero init which is handled because the
-                    // statement above creates an empty page fragment list
-                    // check overlap with any existing fragments
-                    for fragment in fragments.iter() {
-                        if (off < fragment.page_offset + fragment.bytes)
-                            != ((off + len) <= fragment.page_offset)
-                        {
-                        	return Err(AddressRangesFromElfError::MemorySegmentsOverlap);
-                        }
-                    }
-                    fragments.push(PageFragment {
-                        file_offset,
-                        page_offset: off,
-                        bytes: len,
-                    });
-                    addr += len;
-                    file_offset += len;
-                    remaining -= len;
-                }
-                if segment.p_memsz > segment.p_filesz {
-                    // we have some uninitialized data too
-                    ranges.check_address_range(
-                        segment.p_paddr + segment.p_filesz,
-                        segment.p_vaddr + segment.p_filesz,
-                        segment.p_memsz - segment.p_filesz,
-                        true,
-                    )?;
-                }
+            // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
+            if ar.typ != address_range::AddressRangeType::Contents {
+                debug!("ignored");
+                continue;
             }
+            let mut addr = segment.p_paddr;
+            let mut remaining = mapped_size;
+            let mut file_offset = segment.p_offset;
+            while remaining > 0 {
+                let off = addr & (page_size - 1);
+                let len = min(remaining, page_size - off);
+
+                // list of fragments
+                let fragments = pages.entry(addr - off).or_default();
+
+                // note if filesz is zero, we want zero init which is handled because the
+                // statement above creates an empty page fragment list
+                // check overlap with any existing fragments
+                for fragment in fragments.iter() {
+                    if (off < fragment.page_offset + fragment.bytes)
+                        != ((off + len) <= fragment.page_offset)
+                    {
+                        return Err(AddressRangesFromElfError::MemorySegmentsOverlap);
+                    }
+                }
+                fragments.push(PageFragment {
+                    file_offset,
+                    page_offset: off,
+                    bytes: len,
+                });
+                addr += len;
+                file_offset += len;
+                remaining -= len;
+            }
+            if segment.p_memsz > segment.p_filesz {
+                // we have some uninitialized data too
+                ranges.check_address_range(
+                    segment.p_paddr + segment.p_filesz,
+                    segment.p_vaddr + segment.p_filesz,
+                    segment.p_memsz - segment.p_filesz,
+                    true,
+                )?;
+            }
+        }
     }
 
     Ok(pages)

@@ -7,7 +7,11 @@ use static_assertions::const_assert;
 use thiserror::Error;
 use zerocopy::IntoBytes;
 
-use crate::{address_range::{FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_END, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM, XIP_SRAM_END, XIP_SRAM_START}, elf::{address_ranges_from_elf, get_page_fragments, is_ram_binary, realize_page, AddressRangesFromElfError, PAGE_SIZE}, uf2::{Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT, UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1}};
+use crate::{
+	address_range::{FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_END, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM, XIP_SRAM_END, XIP_SRAM_START},
+	elf::{get_page_fragments, is_ram_binary, realize_page, AddressRangesFromElfError, PAGE_SIZE},
+	uf2::{Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT, UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1}
+};
 
 pub mod address_range;
 pub mod elf;
@@ -42,7 +46,7 @@ pub enum Elf2Uf2Error {
     RamBinaryEntryPointError(u32, u32),
 }
 
-fn elf2uf2(mut input: impl Read + Seek + Clone, mut output: impl Write, mut reporter: impl ProgressReporter) -> Result<(), Elf2Uf2Error> {
+pub fn elf2uf2(mut input: impl Read + Seek + Clone, mut output: impl Write, mut reporter: impl ProgressReporter) -> Result<(), Elf2Uf2Error> {
     let elf_file = ElfStream::<AnyEndian, _>::open_stream(input.clone())?;
 
     let ram_style = is_ram_binary(&elf_file)
