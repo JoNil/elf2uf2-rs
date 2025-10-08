@@ -3,6 +3,7 @@ use crate::{
     Opts,
 };
 use assert_into::AssertInto;
+use thiserror::Error;
 use std::{
     cmp::min,
     collections::BTreeMap,
@@ -158,6 +159,17 @@ pub fn realize_page(
     Ok(())
 }
 
+#[derive(Error, Debug)]
+pub enum AddressRangesFromElfError {
+    #[error("No segments in ELF")]
+    NoSegments,
+    #[error("ELF contains memory contents for uninitialized memory at {0:08x}")]
+    MemoryContentsForUninitializedMemory(u64),
+    #[error("Memory segment {0:#08x}->{1:#08x} is outside of valid address range for device")]
+    MemorySegmentInvalidForDevice(u64, u64),
+}
+
+
 pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
     fn range_for(&self, addr: u32) -> Option<&'a AddressRange> {
         self.clone()
@@ -182,7 +194,7 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
         vaddr: u32,
         size: u32,
         uninitialized: bool,
-    ) -> Result<AddressRange, Box<dyn Error>> {
+    ) -> Result<AddressRange, AddressRangesFromElfError> {
         for range in self.clone().into_iter() {
             if range.from <= addr && range.to >= addr + size {
                 if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
@@ -219,7 +231,7 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
     fn check_elf32_ph_entries(
         &self,
         entries: &[Elf32PhEntry],
-    ) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
+    ) -> Result<BTreeMap<u32, Vec<PageFragment>>, AddressRangesFromElfError> {
         let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
 
         for entry in entries {
