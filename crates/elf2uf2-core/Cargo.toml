@@ -15,4 +15,5 @@ assert_into = "1.1"
 static_assertions = "1"
 zerocopy = { version = "0.8", features = ["derive"] }
 log = { workspace = true }
+elf = "0.8"
 thiserror = { workspace = true }

@@ -1,12 +1,30 @@
-use std::io::{Read, Seek, Write};
+use std::{collections::HashSet, io::{Read, Seek, Write}};
 
+use assert_into::AssertInto;
+use ::elf::{endian::AnyEndian, ElfStream, ParseError};
+use log::{debug, info};
+use static_assertions::const_assert;
 use thiserror::Error;
+use zerocopy::IntoBytes;
 
-use crate::elf::{AddressRangesFromElfError, Elf32Header};
+use crate::{address_range::{FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_END, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM, XIP_SRAM_END, XIP_SRAM_START}, elf::{address_ranges_from_elf, get_page_fragments, is_ram_binary, realize_page, AddressRangesFromElfError, PAGE_SIZE}, uf2::{Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT, UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1}};
 
 pub mod address_range;
 pub mod elf;
 pub mod uf2;
+
+pub trait ProgressReporter {
+    fn start(&mut self, total_bytes: usize);
+    fn advance(&mut self, bytes: usize);
+    fn finish(&mut self);
+}
+
+pub struct NoProgress;
+impl ProgressReporter for NoProgress {
+    fn start(&mut self, _total_bytes: usize) {}
+    fn advance(&mut self, _bytes: usize) {}
+    fn finish(&mut self) {}
+}
 
 #[derive(Error, Debug)]
 pub enum Elf2Uf2Error {
@@ -18,23 +36,22 @@ pub enum Elf2Uf2Error {
     RealizePageError(#[from] std::io::Error),
     #[error("The input file has no memory pages")]
     InputFileNoMemoryPagesError,
+    #[error("B0/B1 Boot ROM does not support direct entry into XIP_SRAM")]
+    DirectEntryIntoXipSramError,
+    #[error("A RAM binary should have an entry point at the beginning: {0:#08x} (not {1:#08x})")]
+    RamBinaryEntryPointError(u32, u32),
 }
 
-fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf2Error> {
-    let eh = Elf32Header::from_read(&mut input)?;
+fn elf2uf2(mut input: impl Read + Seek + Clone, mut output: impl Write, mut reporter: impl ProgressReporter) -> Result<(), Elf2Uf2Error> {
+    let elf_file = ElfStream::<AnyEndian, _>::open_stream(input.clone())?;
 
-    let entries = eh.read_elf32_ph_entries(&mut input)?;
+    let ram_style = is_ram_binary(&elf_file)
+        .ok_or("entry point is not in mapped part of file".to_string()).unwrap();
 
-    let ram_style = eh
-        .is_ram_binary(&entries)
-        .ok_or("entry point is not in mapped part of file".to_string())?;
-
-    if Opts::global().verbose {
-        if ram_style {
-            println!("Detected RAM binary");
-        } else {
-            println!("Detected FLASH binary");
-        }
+    if ram_style {
+        info!("Detected RAM binary");
+    } else {
+        info!("Detected FLASH binary");
     }
 
     let valid_ranges = if ram_style {
@@ -43,15 +60,15 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), El
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let mut pages = valid_ranges.check_elf32_ph_entries(&entries)?;
+    let mut pages = get_page_fragments(&elf_file, valid_ranges, PAGE_SIZE)?;
 
     if pages.is_empty() {
-        return Err("The input file has no memory pages".into());
+        return Err(Elf2Uf2Error::InputFileNoMemoryPagesError);
     }
 
     if ram_style {
-        let mut expected_ep_main_ram = u32::MAX;
-        let mut expected_ep_xip_sram = u32::MAX;
+        let mut expected_ep_main_ram = u32::MAX as u64;
+        let mut expected_ep_xip_sram = u32::MAX as u64;
 
         #[allow(clippy::manual_range_contains)]
         pages.keys().copied().for_each(|addr| {
@@ -62,20 +79,17 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), El
             }
         });
 
-        let expected_ep = if expected_ep_main_ram != u32::MAX {
+        let expected_ep = if expected_ep_main_ram != u32::MAX as u64 {
             expected_ep_main_ram
         } else {
             expected_ep_xip_sram
         };
 
         if expected_ep == expected_ep_xip_sram {
-            return Err("B0/B1 Boot ROM does not support direct entry into XIP_SRAM".into());
-        } else if eh.entry != expected_ep {
+            return Err(Elf2Uf2Error::DirectEntryIntoXipSramError);
+        } else if elf_file.ehdr.e_entry != expected_ep {
             #[allow(clippy::unnecessary_cast)]
-            return Err(format!(
-                "A RAM binary should have an entry point at the beginning: {:#08x} (not {:#08x})",
-                expected_ep, eh.entry as u32
-            )
+            return Err(Elf2Uf2Error::RamBinaryEntryPointError(expected_ep as u32, elf_file.ehdr.e_entry as u32)
             .into());
         }
         const_assert!(0 == (MAIN_RAM_START & (PAGE_SIZE - 1)));
@@ -88,7 +102,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), El
         // That workaround is required because the bootrom uses the block number for erase sector calculations:
         // https://github.com/raspberrypi/pico-bootrom/blob/c09c7f08550e8a36fc38dc74f8873b9576de99eb/bootrom/virtual_disk.c#L205
 
-        let touched_sectors: HashSet<u32> = pages
+        let touched_sectors: HashSet<u64> = pages
             .keys()
             .map(|addr| addr / FLASH_SECTOR_ERASE_SIZE)
             .collect();
@@ -111,7 +125,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), El
         magic_start1: UF2_MAGIC_START1,
         flags: UF2_FLAG_FAMILY_ID_PRESENT,
         target_addr: 0,
-        payload_size: PAGE_SIZE,
+        payload_size: PAGE_SIZE as u32,
         block_no: 0,
         num_blocks: pages.len().assert_into(),
         file_size: RP2040_FAMILY_ID,
@@ -123,35 +137,20 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), El
         magic_end: UF2_MAGIC_END,
     };
 
-    if Opts::global().deploy {
-        println!("Transfering program to pico");
-    }
-
-    let mut pb = if !Opts::global().verbose && Opts::global().deploy {
-        Some(ProgressBar::new((pages.len() * 512).assert_into()))
-    } else {
-        None
-    };
-
-    if let Some(pb) = &mut pb {
-        pb.set_units(Units::Bytes);
-    }
+    reporter.start(pages.len() * 512);
 
     let last_page_num = pages.len() - 1;
 
     for (page_num, (target_addr, fragments)) in pages.into_iter().enumerate() {
-        block_header.target_addr = target_addr;
+        block_header.target_addr = target_addr as u32;
         block_header.block_no = page_num.assert_into();
 
-        #[allow(clippy::unnecessary_cast)]
-        if Opts::global().verbose {
-            println!(
-                "Page {} / {} {:#08x}",
-                block_header.block_no as u32,
-                block_header.num_blocks as u32,
-                block_header.target_addr as u32
-            );
-        }
+        debug!(
+            "Page {} / {} {:#08x}",
+            block_header.block_no as u32,
+            block_header.num_blocks as u32,
+            block_header.target_addr as u32
+        );
 
         block_data.iter_mut().for_each(|v| *v = 0);
 
@@ -162,18 +161,40 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), El
         output.write_all(block_footer.as_bytes())?;
 
         if page_num != last_page_num {
-            if let Some(pb) = &mut pb {
-                pb.add(512);
-            }
+            reporter.advance(512);
         }
     }
 
     // Drop the output before the progress bar is allowd to finish
     drop(output);
 
-    if let Some(pb) = &mut pb {
-        pb.add(512);
-    }
+    reporter.advance(512);
+
+    reporter.finish();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    pub fn hello_usb() {
+        let bytes_in = io::Cursor::new(&include_bytes!("../tests/rp2040/hello_usb.elf")[..]);
+        let mut bytes_out = Vec::new();
+        elf2uf2(bytes_in, &mut bytes_out, NoProgress).unwrap();
+
+        assert_eq!(bytes_out, include_bytes!("../tests/rp2040/hello_usb.uf2"));
+    }
+
+    #[test]
+    pub fn hello_serial() {
+        let bytes_in = io::Cursor::new(&include_bytes!("../tests/rp2040/hello_serial.elf")[..]);
+        let mut bytes_out = Vec::new();
+        elf2uf2(bytes_in, &mut bytes_out, NoProgress).unwrap();
+
+        assert_eq!(bytes_out, include_bytes!("../tests/rp2040/hello_serial.uf2"));
+    }
 }
