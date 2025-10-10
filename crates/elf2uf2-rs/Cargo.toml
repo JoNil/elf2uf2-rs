@@ -16,8 +16,12 @@ elf2uf2-core = { version = "2.2.0", path = "../elf2uf2-core" }
 log = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 pbr = "1"
-serialport = { version = "4" }
+serialport = { version = "4", optional = true }
 ctrlc = "3.4"
 env_logger = "0.11"
 anyhow = "1.0"
 sysinfo = "0.32"
+
+[features]
+default = ["serial"]
+serial = ["serialport"]

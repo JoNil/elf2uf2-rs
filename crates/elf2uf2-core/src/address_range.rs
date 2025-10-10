@@ -1,6 +1,3 @@
-
-
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AddressRangeType {
     /// May have contents

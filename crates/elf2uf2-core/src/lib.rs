@@ -1,16 +1,25 @@
-use std::{collections::HashSet, io::{Read, Seek, Write}};
+use std::{
+    collections::HashSet,
+    io::{Read, Seek, Write},
+};
 
+use ::elf::{ElfStream, ParseError, endian::AnyEndian};
 use assert_into::AssertInto;
-use ::elf::{endian::AnyEndian, ElfStream, ParseError};
 use log::{debug, info};
 use static_assertions::const_assert;
 use thiserror::Error;
 use zerocopy::IntoBytes;
 
 use crate::{
-	address_range::{FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_END, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM, XIP_SRAM_END, XIP_SRAM_START},
-	elf::{get_page_fragments, is_ram_binary, realize_page, AddressRangesFromElfError, PAGE_SIZE},
-	uf2::{Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT, UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1}
+    address_range::{
+        FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_END, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH,
+        RP2040_ADDRESS_RANGES_RAM, XIP_SRAM_END, XIP_SRAM_START,
+    },
+    elf::{AddressRangesFromElfError, PAGE_SIZE, get_page_fragments, is_ram_binary, realize_page},
+    uf2::{
+        RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT, UF2_MAGIC_END, UF2_MAGIC_START0,
+        UF2_MAGIC_START1, Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader,
+    },
 };
 
 pub mod address_range;
@@ -46,11 +55,16 @@ pub enum Elf2Uf2Error {
     RamBinaryEntryPointError(u32, u32),
 }
 
-pub fn elf2uf2(mut input: impl Read + Seek + Clone, mut output: impl Write, mut reporter: impl ProgressReporter) -> Result<(), Elf2Uf2Error> {
-    let elf_file = ElfStream::<AnyEndian, _>::open_stream(input.clone())?;
+pub fn elf2uf2(
+    input: impl Read + Seek,
+    mut output: impl Write,
+    mut reporter: impl ProgressReporter,
+) -> Result<(), Elf2Uf2Error> {
+    let mut elf_file = ElfStream::<AnyEndian, _>::open_stream(input)?;
 
     let ram_style = is_ram_binary(&elf_file)
-        .ok_or("entry point is not in mapped part of file".to_string()).unwrap();
+        .ok_or("entry point is not in mapped part of file".to_string())
+        .unwrap();
 
     if ram_style {
         info!("Detected RAM binary");
@@ -93,7 +107,10 @@ pub fn elf2uf2(mut input: impl Read + Seek + Clone, mut output: impl Write, mut 
             return Err(Elf2Uf2Error::DirectEntryIntoXipSramError);
         } else if elf_file.ehdr.e_entry != expected_ep {
             #[allow(clippy::unnecessary_cast)]
-            return Err(Elf2Uf2Error::RamBinaryEntryPointError(expected_ep as u32, elf_file.ehdr.e_entry as u32)
+            return Err(Elf2Uf2Error::RamBinaryEntryPointError(
+                expected_ep as u32,
+                elf_file.ehdr.e_entry as u32,
+            )
             .into());
         }
         const_assert!(0 == (MAIN_RAM_START & (PAGE_SIZE - 1)));
@@ -158,7 +175,7 @@ pub fn elf2uf2(mut input: impl Read + Seek + Clone, mut output: impl Write, mut 
 
         block_data.iter_mut().for_each(|v| *v = 0);
 
-        realize_page(&mut input, &fragments, &mut block_data)?;
+        realize_page(&mut elf_file, &fragments, &mut block_data)?;
 
         output.write_all(block_header.as_bytes())?;
         output.write_all(block_data.as_bytes())?;
@@ -199,6 +216,9 @@ mod tests {
         let mut bytes_out = Vec::new();
         elf2uf2(bytes_in, &mut bytes_out, NoProgress).unwrap();
 
-        assert_eq!(bytes_out, include_bytes!("../tests/rp2040/hello_serial.uf2"));
+        assert_eq!(
+            bytes_out,
+            include_bytes!("../tests/rp2040/hello_serial.uf2")
+        );
     }
 }

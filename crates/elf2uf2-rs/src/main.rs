@@ -1,14 +1,16 @@
+use anyhow::bail;
 use clap::Parser;
-use pbr::{ProgressBar, Units};
+use elf2uf2_core::elf2uf2;
 use std::{
-    collections::HashSet,
-    error::Error,
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Seek, Write},
-    path::{Path, PathBuf},
-    sync::OnceLock,
+    io::{BufReader, BufWriter, Read, Write},
+    path::Path,
 };
 use sysinfo::Disks;
+
+use crate::reporter::ProgressBarReporter;
+
+pub mod reporter;
 
 #[derive(Parser, Debug, Default)]
 #[clap(author = "Jonathan Nilsson")]
@@ -38,34 +40,21 @@ struct Opts {
     output: Option<String>,
 }
 
-impl Opts {
-    fn output_path(&self) -> PathBuf {
-        if let Some(output) = &self.output {
-            Path::new(output).with_extension("uf2")
-        } else {
-            Path::new(&self.input).with_extension("uf2")
-        }
-    }
-
-    fn global() -> &'static Opts {
-        OPTS.get().expect("Opts is not initialized")
-    }
-}
-
-static OPTS: OnceLock<Opts> = OnceLock::new();
-
-
-
-fn main() -> Result<(), Box<dyn Error>> {
-    OPTS.set(Opts::parse()).unwrap();
+fn main() -> anyhow::Result<()> {
+    let options = Opts::parse();
+    let output_path = if let Some(output) = &options.output {
+        Path::new(output).with_extension("uf2")
+    } else {
+        Path::new(&options.input).with_extension("uf2")
+    };
 
     #[cfg(feature = "serial")]
     let serial_ports_before = serialport::available_ports()?;
 
     let mut deployed_path = None;
-    let input = BufReader::new(File::open(&Opts::global().input)?);
+    let input = BufReader::new(File::open(&options.input)?);
 
-    let output = if Opts::global().deploy {
+    let output = if options.deploy {
         let disks = Disks::new_with_refreshed_list();
 
         let mut pico_drive = None;
@@ -83,26 +72,30 @@ fn main() -> Result<(), Box<dyn Error>> {
             deployed_path = Some(pico_drive.join("out.uf2"));
             File::create(deployed_path.as_ref().unwrap())?
         } else {
-            return Err("Unable to find mounted pico".into());
+            bail!("Unable to find mounted pico");
         }
     } else {
-        File::create(Opts::global().output_path())?
+        File::create(&output_path)?
     };
 
-    if let Err(err) = elf2uf2(input, BufWriter::new(output)) {
-        if Opts::global().deploy {
+    if let Err(err) = elf2uf2(
+        input,
+        BufWriter::new(output),
+        ProgressBarReporter::new(options.deploy),
+    ) {
+        if options.deploy {
             fs::remove_file(deployed_path.unwrap())?;
         } else {
-            fs::remove_file(Opts::global().output_path())?;
+            fs::remove_file(output_path)?;
         }
-        return Err(err);
+        return Err(err.into());
     }
 
     // New line after progress bar
     println!();
 
     #[cfg(feature = "serial")]
-    if Opts::global().serial {
+    if options.serial {
         use std::process;
         use std::sync::{Arc, Mutex};
         use std::time::Duration;
@@ -146,7 +139,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
                     };
 
-                    if Opts::global().term {
+                    if options.term {
                         ctrlc::set_handler(handler.clone()).expect("Error setting Ctrl-C handler");
                     }
 
@@ -169,7 +162,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
                                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {
-                                    if Opts::global().term {
+                                    if options.term {
                                         handler();
                                     }
                                     return Err(e.into());

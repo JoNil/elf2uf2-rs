@@ -2,12 +2,12 @@ use crate::address_range::{
     self, AddressRange, AddressRangeType, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
 };
 use assert_into::AssertInto;
-use elf::{ElfStream, abi::PT_LOAD, endian::EndianParse};
+use elf::{ElfStream, ParseError, abi::PT_LOAD, endian::EndianParse, segment::ProgramHeader};
 use log::debug;
 use std::{
     cmp::min,
     collections::BTreeMap,
-    io::{Read, Seek, SeekFrom},
+    io::{Read, Seek},
 };
 use thiserror::Error;
 
@@ -39,28 +39,30 @@ pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(file: &ElfStream<E, S>) -> 
     None
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct PageFragment {
+    pub segment: ProgramHeader,
     pub file_offset: u64,
     pub page_offset: u64,
     pub bytes: u64,
 }
 
-pub fn realize_page(
-    input: &mut (impl Read + Seek),
+pub fn realize_page<E: EndianParse, S: Read + Seek>(
+    file: &mut ElfStream<E, S>,
     fragments: &[PageFragment],
     buf: &mut [u8],
-) -> Result<(), std::io::Error> {
+) -> Result<(), ParseError> {
     assert!(buf.len() >= PAGE_SIZE.assert_into());
 
     for frag in fragments {
+        let data = file.segment_data(&frag.segment)?;
         assert!(frag.page_offset < PAGE_SIZE && frag.page_offset + frag.bytes <= PAGE_SIZE);
 
-        input.seek(SeekFrom::Start(frag.file_offset.assert_into()))?;
+        let start = (frag.file_offset - frag.segment.p_offset) as usize;
+        let end = start + frag.bytes as usize;
 
-        input.read_exact(
-            &mut buf[frag.page_offset.assert_into()..(frag.page_offset + frag.bytes).assert_into()],
-        )?;
+        buf[frag.page_offset.assert_into()..(frag.page_offset + frag.bytes).assert_into()]
+            .copy_from_slice(&data[start..end]);
     }
 
     Ok(())
@@ -212,6 +214,7 @@ pub fn get_page_fragments<E: EndianParse, S: Read + Seek>(
                     }
                 }
                 fragments.push(PageFragment {
+                    segment: segment.clone(),
                     file_offset,
                     page_offset: off,
                     bytes: len,
