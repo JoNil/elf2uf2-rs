@@ -1,0 +1,19 @@
+[package]
+name = "elf2uf2-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+repository = "https://github.com/JoNil/elf2uf2-rs/tree/main/crates/elf2uf2-core"
+categories = ["embedded"]
+description = "The core library behind `elf2uf2`, helps convert elf files to uf2 files"
+keywords = ["rp2040", "pico", "elf2uf2", "elf2uf2-rs"]
+documentation = "https://docs.rs/elf2uf2-core"
+
+[dependencies]
+assert_into = "1.1"
+static_assertions = "1"
+zerocopy = { version = "0.8", features = ["derive"] }
+log = { workspace = true }
+elf = "0.8"
+thiserror = { workspace = true }
