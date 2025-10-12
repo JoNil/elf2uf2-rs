@@ -39,3 +39,13 @@ jobs:
 
       - name: Cargo test
         run: cargo test
+
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cargo fmt
+        run: cargo fmt --check
