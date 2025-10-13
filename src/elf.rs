@@ -1,22 +1,22 @@
 use crate::{
-    address_range::{self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM},
+    address_range::{self, AddressRange},
     Opts,
 };
 use assert_into::AssertInto;
-use std::{
-    cmp::min,
-    collections::BTreeMap,
-    error::Error,
-    io::{Read, Seek, SeekFrom},
-    mem,
-};
+use std::{error::Error, io::Read, mem};
 use zerocopy::{FromBytes, IntoBytes};
 
 const ELF_MAGIC: u32 = 0x464c457f;
 const PT_LOAD: u32 = 0x00000001;
 
-pub const LOG2_PAGE_SIZE: u32 = 8;
-pub const PAGE_SIZE: u32 = 1 << LOG2_PAGE_SIZE;
+/// Filter the entries in `entries` to only those that must be loaded
+/// (have the `PT_LOAD` type) and are non-empty.
+pub fn loadable_nonempty(entries: &[Elf32PhEntry]) -> impl Iterator<Item = &Elf32PhEntry> {
+    entries.iter().filter(|e| {
+        let mapped_size = e.filez.min(e.memsz);
+        e.typ == PT_LOAD && mapped_size > 0
+    })
+}
 
 #[allow(unused)]
 #[repr(C, packed)]
@@ -90,31 +90,6 @@ impl Elf32Header {
 
         Ok(entries)
     }
-
-    // "determine_binary_type"
-    pub(crate) fn is_ram_binary(&self, entries: &[Elf32PhEntry]) -> Option<bool> {
-        for entry in entries {
-            if entry.typ == PT_LOAD && entry.memsz > 0 {
-                let mapped_size = entry.filez.min(entry.memsz);
-                if mapped_size > 0 {
-                    // We back-convert the entrypoint from a VADDR to a PADDR to see if it originates inflash, and if
-                    // so call THAT a flash binary
-                    if self.entry >= entry.vaddr && self.entry < entry.vaddr + mapped_size {
-                        let effective_entry = self.entry + entry.paddr - entry.vaddr;
-                        if RP2040_ADDRESS_RANGES_RAM.is_address_initialized(effective_entry) {
-                            return Some(true);
-                        } else if RP2040_ADDRESS_RANGES_FLASH
-                            .is_address_initialized(effective_entry)
-                        {
-                            return Some(false);
-                        }
-                    }
-                }
-            }
-        }
-
-        None
-    }
 }
 
 #[allow(unused)]
@@ -136,26 +111,6 @@ pub struct PageFragment {
     pub file_offset: u32,
     pub page_offset: u32,
     pub bytes: u32,
-}
-
-pub fn realize_page(
-    input: &mut (impl Read + Seek),
-    fragments: &[PageFragment],
-    buf: &mut [u8],
-) -> Result<(), Box<dyn Error>> {
-    assert!(buf.len() >= PAGE_SIZE.assert_into());
-
-    for frag in fragments {
-        assert!(frag.page_offset < PAGE_SIZE && frag.page_offset + frag.bytes <= PAGE_SIZE);
-
-        input.seek(SeekFrom::Start(frag.file_offset.assert_into()))?;
-
-        input.read_exact(
-            &mut buf[frag.page_offset.assert_into()..(frag.page_offset + frag.bytes).assert_into()],
-        )?;
-    }
-
-    Ok(())
 }
 
 pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
@@ -214,72 +169,6 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
             addr + size
         )
         .into())
-    }
-
-    fn check_elf32_ph_entries(
-        &self,
-        entries: &[Elf32PhEntry],
-    ) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
-        let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
-
-        for entry in entries {
-            if entry.typ == PT_LOAD && entry.memsz > 0 {
-                let mapped_size = min(entry.filez, entry.memsz);
-
-                if mapped_size > 0 {
-                    let ar =
-                        self.check_address_range(entry.paddr, entry.vaddr, mapped_size, false)?;
-
-                    // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
-                    if ar.typ != address_range::AddressRangeType::Contents {
-                        if Opts::global().verbose {
-                            println!("ignored");
-                        }
-                        continue;
-                    }
-                    let mut addr = entry.paddr;
-                    let mut remaining = mapped_size;
-                    let mut file_offset = entry.offset;
-                    while remaining > 0 {
-                        let off = addr & (PAGE_SIZE - 1);
-                        let len = min(remaining, PAGE_SIZE - off);
-
-                        // list of fragments
-                        let fragments = pages.entry(addr - off).or_default();
-
-                        // note if filesz is zero, we want zero init which is handled because the
-                        // statement above creates an empty page fragment list
-                        // check overlap with any existing fragments
-                        for fragment in fragments.iter() {
-                            if (off < fragment.page_offset + fragment.bytes)
-                                != ((off + len) <= fragment.page_offset)
-                            {
-                                return Err("In memory segments overlap".into());
-                            }
-                        }
-                        fragments.push(PageFragment {
-                            file_offset,
-                            page_offset: off,
-                            bytes: len,
-                        });
-                        addr += len;
-                        file_offset += len;
-                        remaining -= len;
-                    }
-                    if entry.memsz > entry.filez {
-                        // we have some uninitialized data too
-                        self.check_address_range(
-                            entry.paddr + entry.filez,
-                            entry.vaddr + entry.filez,
-                            entry.memsz - entry.filez,
-                            true,
-                        )?;
-                    }
-                }
-            }
-        }
-
-        Ok(pages)
     }
 }
 

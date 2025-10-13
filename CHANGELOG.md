@@ -1,5 +1,8 @@
 ## Unreleased
 
+## Internal
+* Separate `RP2040` into a separate module to facillitate support for other chips in the future.
+
 ## [v2.2.0](https://github.com/JoNil/elf2uf2-rs/tree/2.2.0)
 
 * Added: accept ELFs with GNU ABI ([#41](https://github.com/JoNil/elf2uf2-rs/pull/41))
