@@ -3,13 +3,13 @@ use crate::{
     Opts,
 };
 use assert_into::AssertInto;
-use elf::{abi::PT_LOAD, endian::EndianParse, segment::ProgramHeader, ElfStream};
+use elf::{abi::PT_LOAD, endian::EndianParse, segment::ProgramHeader, ElfStream, ParseError};
 use std::{
     cmp::min,
     collections::BTreeMap,
-    error::Error,
     io::{Read, Seek},
 };
+use thiserror::Error;
 
 pub const LOG2_PAGE_SIZE: u64 = 8;
 pub const PAGE_SIZE: u64 = 1 << LOG2_PAGE_SIZE;
@@ -51,7 +51,7 @@ pub fn realize_page<E: EndianParse, S: Read + Seek>(
     file: &mut ElfStream<E, S>,
     fragments: &[PageFragment],
     buf: &mut [u8],
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), ParseError> {
     assert!(buf.len() >= PAGE_SIZE.assert_into());
 
     for frag in fragments {
@@ -66,6 +66,18 @@ pub fn realize_page<E: EndianParse, S: Read + Seek>(
     }
 
     Ok(())
+}
+
+#[derive(Error, Debug)]
+pub enum AddressRangesFromElfError {
+    #[error("No segments in ELF")]
+    NoSegments,
+    #[error("In memory segments overlap")]
+    MemorySegmentsOverlap,
+    #[error("ELF contains memory contents for uninitialized memory at {0:08x}")]
+    MemoryContentsForUninitializedMemory(u64),
+    #[error("Memory segment {0:#08x}->{1:#08x} is outside of valid address range for device")]
+    MemorySegmentInvalidForDevice(u64, u64),
 }
 
 pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
@@ -92,14 +104,13 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
         vaddr: u64,
         size: u64,
         uninitialized: bool,
-    ) -> Result<AddressRange, Box<dyn Error>> {
+    ) -> Result<AddressRange, AddressRangesFromElfError> {
         for range in self.clone().into_iter() {
             if range.from <= addr && range.to >= addr + size {
                 if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
-                    return Err(format!(
-                        "ELF contains memory contents for uninitialized memory at {addr:08x}"
-                    )
-                    .into());
+                    return Err(
+                        AddressRangesFromElfError::MemoryContentsForUninitializedMemory(addr),
+                    );
                 }
                 if Opts::global().verbose {
                     println!(
@@ -118,18 +129,16 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
                 return Ok(*range);
             }
         }
-        Err(format!(
-            "Memory segment {:#08x}->{:#08x} is outside of valid address range for device",
+        Err(AddressRangesFromElfError::MemorySegmentInvalidForDevice(
             addr,
-            addr + size
-        )
-        .into())
+            addr + size,
+        ))
     }
 
     fn check_elf32_ph_entries<E: EndianParse, S: Read + Seek>(
         &self,
         file: &ElfStream<E, S>,
-    ) -> Result<BTreeMap<u64, Vec<PageFragment>>, Box<dyn Error>> {
+    ) -> Result<BTreeMap<u64, Vec<PageFragment>>, AddressRangesFromElfError> {
         let mut pages = BTreeMap::<u64, Vec<PageFragment>>::new();
 
         for segment in file.segments() {
@@ -168,7 +177,7 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
                             if (off < fragment.page_offset + fragment.bytes)
                                 != ((off + len) <= fragment.page_offset)
                             {
-                                return Err("In memory segments overlap".into());
+                                return Err(AddressRangesFromElfError::MemorySegmentsOverlap);
                             }
                         }
                         fragments.push(PageFragment {
