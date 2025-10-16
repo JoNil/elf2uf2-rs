@@ -1,8 +1,8 @@
 use crate::{
     address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START},
-    elf::is_ram_binary,
+    elf::{is_ram_binary, AddressRangesFromElfError},
 };
-use ::elf::{endian::AnyEndian, ElfStream};
+use ::elf::{endian::AnyEndian, ElfStream, ParseError};
 use address_range::{
     FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
 };
@@ -20,6 +20,7 @@ use std::{
     sync::OnceLock,
 };
 use sysinfo::Disks;
+use thiserror::Error;
 use uf2::{
     Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT,
     UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
@@ -74,11 +75,28 @@ impl Opts {
 
 static OPTS: OnceLock<Opts> = OnceLock::new();
 
-fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
+#[derive(Error, Debug)]
+pub enum Elf2Uf2Error {
+    #[error("Failed to get address ranges from elf")]
+    AddressRangesError(#[from] AddressRangesFromElfError),
+    #[error("Failed to parse elf file")]
+    ElfParseError(#[from] ParseError),
+    #[error("Failed to realize pages")]
+    RealizePageError(#[from] std::io::Error),
+    #[error("The input file has no memory pages")]
+    InputFileNoMemoryPagesError,
+    #[error("B0/B1 Boot ROM does not support direct entry into XIP_SRAM")]
+    DirectEntryIntoXipSramError,
+    #[error("A RAM binary should have an entry point at the beginning: {0:#08x} (not {1:#08x})")]
+    RamBinaryEntryPointError(u32, u32),
+    #[error("entry point is not in mapped part of file")]
+    EntryPointNotMappedError,
+}
+
+fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf2Error> {
     let mut elf_file = ElfStream::<AnyEndian, _>::open_stream(input)?;
 
-    let ram_style =
-        is_ram_binary(&elf_file).ok_or("entry point is not in mapped part of file".to_string())?;
+    let ram_style = is_ram_binary(&elf_file).ok_or(Elf2Uf2Error::EntryPointNotMappedError)?;
 
     if Opts::global().verbose {
         if ram_style {
@@ -97,7 +115,7 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dy
     let mut pages = valid_ranges.check_elf32_ph_entries(&elf_file)?;
 
     if pages.is_empty() {
-        return Err("The input file has no memory pages".into());
+        return Err(Elf2Uf2Error::InputFileNoMemoryPagesError);
     }
 
     if ram_style {
@@ -120,14 +138,13 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dy
         };
 
         if expected_ep == expected_ep_xip_sram {
-            return Err("B0/B1 Boot ROM does not support direct entry into XIP_SRAM".into());
+            return Err(Elf2Uf2Error::DirectEntryIntoXipSramError);
         } else if elf_file.ehdr.e_entry != expected_ep {
             #[allow(clippy::unnecessary_cast)]
-            return Err(format!(
-                "A RAM binary should have an entry point at the beginning: {:#08x} (not {:#08x})",
-                expected_ep, elf_file.ehdr.e_entry as u32
-            )
-            .into());
+            return Err(Elf2Uf2Error::RamBinaryEntryPointError(
+                expected_ep as u32,
+                elf_file.ehdr.e_entry as u32,
+            ));
         }
         const_assert!(0 == (MAIN_RAM_START & (PAGE_SIZE - 1)));
 
@@ -268,7 +285,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         } else {
             fs::remove_file(Opts::global().output_path())?;
         }
-        return Err(err);
+        return Err(Box::new(err));
     }
 
     // New line after progress bar

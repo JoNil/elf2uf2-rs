@@ -219,6 +219,7 @@ dependencies = [
  "serialport",
  "static_assertions",
  "sysinfo",
+ "thiserror",
  "zerocopy",
 ]
 
