@@ -1,6 +1,7 @@
 use crate::{
     address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START},
     elf::{is_ram_binary, AddressRangesFromElfError},
+    reporter::{ProgressBarReporter, ProgressReporter},
 };
 use ::elf::{endian::AnyEndian, ElfStream, ParseError};
 use address_range::{
@@ -9,15 +10,15 @@ use address_range::{
 use assert_into::AssertInto;
 use clap::Parser;
 use elf::{realize_page, AddressRangesExt, PAGE_SIZE};
-use pbr::{ProgressBar, Units};
+use env_logger::Env;
+use log::{debug, info, Level, LevelFilter};
 use static_assertions::const_assert;
 use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, Write},
-    path::{Path, PathBuf},
-    sync::OnceLock,
+    path::Path,
 };
 use sysinfo::Disks;
 use thiserror::Error;
@@ -29,6 +30,7 @@ use zerocopy::IntoBytes;
 
 mod address_range;
 mod elf;
+mod reporter;
 mod uf2;
 
 #[derive(Parser, Debug, Default)]
@@ -59,22 +61,6 @@ struct Opts {
     output: Option<String>,
 }
 
-impl Opts {
-    fn output_path(&self) -> PathBuf {
-        if let Some(output) = &self.output {
-            Path::new(output).with_extension("uf2")
-        } else {
-            Path::new(&self.input).with_extension("uf2")
-        }
-    }
-
-    fn global() -> &'static Opts {
-        OPTS.get().expect("Opts is not initialized")
-    }
-}
-
-static OPTS: OnceLock<Opts> = OnceLock::new();
-
 #[derive(Error, Debug)]
 pub enum Elf2Uf2Error {
     #[error("Failed to get address ranges from elf")]
@@ -95,18 +81,20 @@ pub enum Elf2Uf2Error {
     EntryPointNotMapped,
 }
 
-fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf2Error> {
+fn elf2uf2(
+    input: impl Read + Seek,
+    mut output: impl Write,
+    mut reporter: impl ProgressReporter,
+) -> Result<(), Elf2Uf2Error> {
     let mut elf_file =
         ElfStream::<AnyEndian, _>::open_stream(input).map_err(Elf2Uf2Error::FailedToOpenElfFile)?;
 
     let ram_style = is_ram_binary(&elf_file).ok_or(Elf2Uf2Error::EntryPointNotMapped)?;
 
-    if Opts::global().verbose {
-        if ram_style {
-            println!("Detected RAM binary");
-        } else {
-            println!("Detected FLASH binary");
-        }
+    if ram_style {
+        debug!("Detected RAM binary");
+    } else {
+        debug!("Detected FLASH binary");
     }
 
     let valid_ranges = if ram_style {
@@ -196,19 +184,7 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
         magic_end: UF2_MAGIC_END,
     };
 
-    if Opts::global().deploy {
-        println!("Transfering program to pico");
-    }
-
-    let mut pb = if !Opts::global().verbose && Opts::global().deploy {
-        Some(ProgressBar::new((pages.len() * 512).assert_into()))
-    } else {
-        None
-    };
-
-    if let Some(pb) = &mut pb {
-        pb.set_units(Units::Bytes);
-    }
+    reporter.start(pages.len() * 512);
 
     let last_page_num = pages.len() - 1;
 
@@ -216,15 +192,12 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
         block_header.target_addr = target_addr.assert_into();
         block_header.block_no = page_num.assert_into();
 
-        #[allow(clippy::unnecessary_cast)]
-        if Opts::global().verbose {
-            println!(
-                "Page {} / {} {:#08x}",
-                block_header.block_no as u32,
-                block_header.num_blocks as u32,
-                block_header.target_addr as u32
-            );
-        }
+        debug!(
+            "Page {} / {} {:#08x}",
+            block_header.block_no as u32,
+            block_header.num_blocks as u32,
+            block_header.target_addr as u32
+        );
 
         block_data.iter_mut().for_each(|v| *v = 0);
 
@@ -242,32 +215,52 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
             .map_err(Elf2Uf2Error::FailedToWrite)?;
 
         if page_num != last_page_num {
-            if let Some(pb) = &mut pb {
-                pb.add(512);
-            }
+            reporter.advance(512);
         }
     }
 
     // Drop the output before the progress bar is allowd to finish
     drop(output);
 
-    if let Some(pb) = &mut pb {
-        pb.add(512);
-    }
+    reporter.advance(512);
+
+    reporter.finish();
 
     Ok(())
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    OPTS.set(Opts::parse()).unwrap();
+    let options = Opts::parse();
+
+    env_logger::Builder::from_env(Env::default())
+        .filter_level(match options.verbose {
+            true => LevelFilter::Debug,
+            false => LevelFilter::Info,
+        })
+        .target(env_logger::Target::Stdout)
+        .format(|buf, record| {
+            let level = record.level();
+            if level == Level::Info {
+                writeln!(buf, "{}", record.args())
+            } else {
+                writeln!(buf, "{}: {}", record.level(), record.args())
+            }
+        })
+        .init();
+
+    let output_path = if let Some(output) = &options.output {
+        Path::new(output).with_extension("uf2")
+    } else {
+        Path::new(&options.input).with_extension("uf2")
+    };
 
     #[cfg(feature = "serial")]
     let serial_ports_before = serialport::available_ports()?;
 
     let mut deployed_path = None;
-    let input = BufReader::new(File::open(&Opts::global().input)?);
+    let input = BufReader::new(File::open(&options.input)?);
 
-    let output = if Opts::global().deploy {
+    let output = if options.deploy {
         let disks = Disks::new_with_refreshed_list();
 
         let mut pico_drive = None;
@@ -275,7 +268,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mount = disk.mount_point();
 
             if mount.join("INFO_UF2.TXT").is_file() {
-                println!("Found pico uf2 disk {}", &mount.to_string_lossy());
+                info!("Found pico uf2 disk {}", &mount.to_string_lossy());
                 pico_drive = Some(mount.to_owned());
                 break;
             }
@@ -288,14 +281,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             return Err("Unable to find mounted pico".into());
         }
     } else {
-        File::create(Opts::global().output_path())?
+        File::create(&output_path)?
     };
 
-    if let Err(err) = elf2uf2(input, BufWriter::new(output)) {
-        if Opts::global().deploy {
+    if let Err(err) = elf2uf2(
+        input,
+        BufWriter::new(output),
+        ProgressBarReporter::new(options.deploy),
+    ) {
+        if options.deploy {
             fs::remove_file(deployed_path.unwrap())?;
         } else {
-            fs::remove_file(Opts::global().output_path())?;
+            fs::remove_file(&output_path)?;
         }
         return Err(Box::new(err));
     }
@@ -304,7 +301,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!();
 
     #[cfg(feature = "serial")]
-    if Opts::global().serial {
+    if options.serial {
         use std::process;
         use std::sync::{Arc, Mutex};
         use std::time::Duration;
@@ -315,7 +312,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let serial_port_info = 'find_loop: loop {
             for port in serialport::available_ports()? {
                 if !serial_ports_before.contains(&port) {
-                    println!("Found pico serial on {}", &port.port_name);
+                    info!("Found pico serial on {}", &port.port_name);
                     break 'find_loop Some(port);
                 }
             }
@@ -348,7 +345,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
                     };
 
-                    if Opts::global().term {
+                    if options.term {
                         ctrlc::set_handler(handler.clone()).expect("Error setting Ctrl-C handler");
                     }
 
@@ -371,7 +368,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
                                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {
-                                    if Opts::global().term {
+                                    if options.term {
                                         handler();
                                     }
                                     return Err(e.into());
@@ -392,31 +389,25 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 #[cfg(test)]
 mod tests {
+    use crate::reporter::NoProgress;
+
     use super::*;
     use std::io;
 
     #[test]
     pub fn hello_usb() {
-        // Horrendous hack to get it to stop complaining about opts
-        // TODO: just pass opts by reference, or use log crate
-        OPTS.set(Default::default()).ok();
-
         let bytes_in = io::Cursor::new(&include_bytes!("../hello_usb.elf")[..]);
         let mut bytes_out = Vec::new();
-        elf2uf2(bytes_in, &mut bytes_out).unwrap();
+        elf2uf2(bytes_in, &mut bytes_out, NoProgress).unwrap();
 
         assert_eq!(bytes_out, include_bytes!("../hello_usb.uf2"));
     }
 
     #[test]
     pub fn hello_serial() {
-        // Horrendous hack to get it to stop complaining about opts
-        // TODO: just pass opts by reference, or use log crate
-        OPTS.set(Default::default()).ok();
-
         let bytes_in = io::Cursor::new(&include_bytes!("../hello_serial.elf")[..]);
         let mut bytes_out = Vec::new();
-        elf2uf2(bytes_in, &mut bytes_out).unwrap();
+        elf2uf2(bytes_in, &mut bytes_out, NoProgress).unwrap();
 
         assert_eq!(bytes_out, include_bytes!("../hello_serial.uf2"));
     }
