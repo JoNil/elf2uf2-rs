@@ -1,9 +1,9 @@
-use crate::{
-    address_range::{self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM},
-    Opts,
+use crate::address_range::{
+    self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
 };
 use assert_into::AssertInto;
 use elf::{abi::PT_LOAD, endian::EndianParse, segment::ProgramHeader, ElfStream, ParseError};
+use log::debug;
 use std::{
     cmp::min,
     collections::BTreeMap,
@@ -112,20 +112,18 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
                         addr,
                     ));
                 }
-                if Opts::global().verbose {
-                    println!(
-                        "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
-                        if uninitialized {
-                            "Uninitialized"
-                        } else {
-                            "Mapped"
-                        },
-                        addr,
-                        addr + size,
-                        vaddr,
-                        vaddr + size
-                    );
-                }
+                debug!(
+                    "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
+                    if uninitialized {
+                        "Uninitialized"
+                    } else {
+                        "Mapped"
+                    },
+                    addr,
+                    addr + size,
+                    vaddr,
+                    vaddr + size
+                );
                 return Ok(*range);
             }
         }
@@ -155,9 +153,7 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
 
                     // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
                     if ar.typ != address_range::AddressRangeType::Contents {
-                        if Opts::global().verbose {
-                            println!("ignored");
-                        }
+                        debug!("ignored");
                         continue;
                     }
                     let mut addr = segment.p_paddr;
