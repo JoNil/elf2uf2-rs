@@ -1,10 +1,14 @@
-use crate::address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START};
+use crate::{
+    address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START},
+    elf::is_ram_binary,
+};
+use ::elf::{endian::AnyEndian, ElfStream};
 use address_range::{
     FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
 };
 use assert_into::AssertInto;
 use clap::Parser;
-use elf::{realize_page, AddressRangesExt, Elf32Header, PAGE_SIZE};
+use elf::{realize_page, AddressRangesExt, PAGE_SIZE};
 use pbr::{ProgressBar, Units};
 use static_assertions::const_assert;
 use std::{
@@ -70,14 +74,11 @@ impl Opts {
 
 static OPTS: OnceLock<Opts> = OnceLock::new();
 
-fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
-    let eh = Elf32Header::from_read(&mut input)?;
+fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Box<dyn Error>> {
+    let mut elf_file = ElfStream::<AnyEndian, _>::open_stream(input)?;
 
-    let entries = eh.read_elf32_ph_entries(&mut input)?;
-
-    let ram_style = eh
-        .is_ram_binary(&entries)
-        .ok_or("entry point is not in mapped part of file".to_string())?;
+    let ram_style =
+        is_ram_binary(&elf_file).ok_or("entry point is not in mapped part of file".to_string())?;
 
     if Opts::global().verbose {
         if ram_style {
@@ -93,15 +94,15 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let mut pages = valid_ranges.check_elf32_ph_entries(&entries)?;
+    let mut pages = valid_ranges.check_elf32_ph_entries(&elf_file)?;
 
     if pages.is_empty() {
         return Err("The input file has no memory pages".into());
     }
 
     if ram_style {
-        let mut expected_ep_main_ram = u32::MAX;
-        let mut expected_ep_xip_sram = u32::MAX;
+        let mut expected_ep_main_ram = u32::MAX as u64;
+        let mut expected_ep_xip_sram = u32::MAX as u64;
 
         #[allow(clippy::manual_range_contains)]
         pages.keys().copied().for_each(|addr| {
@@ -112,7 +113,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
             }
         });
 
-        let expected_ep = if expected_ep_main_ram != u32::MAX {
+        let expected_ep = if expected_ep_main_ram != u32::MAX as u64 {
             expected_ep_main_ram
         } else {
             expected_ep_xip_sram
@@ -120,11 +121,11 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
 
         if expected_ep == expected_ep_xip_sram {
             return Err("B0/B1 Boot ROM does not support direct entry into XIP_SRAM".into());
-        } else if eh.entry != expected_ep {
+        } else if elf_file.ehdr.e_entry != expected_ep {
             #[allow(clippy::unnecessary_cast)]
             return Err(format!(
                 "A RAM binary should have an entry point at the beginning: {:#08x} (not {:#08x})",
-                expected_ep, eh.entry as u32
+                expected_ep, elf_file.ehdr.e_entry as u32
             )
             .into());
         }
@@ -138,7 +139,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         // That workaround is required because the bootrom uses the block number for erase sector calculations:
         // https://github.com/raspberrypi/pico-bootrom/blob/c09c7f08550e8a36fc38dc74f8873b9576de99eb/bootrom/virtual_disk.c#L205
 
-        let touched_sectors: HashSet<u32> = pages
+        let touched_sectors: HashSet<u64> = pages
             .keys()
             .map(|addr| addr / FLASH_SECTOR_ERASE_SIZE)
             .collect();
@@ -161,7 +162,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
         magic_start1: UF2_MAGIC_START1,
         flags: UF2_FLAG_FAMILY_ID_PRESENT,
         target_addr: 0,
-        payload_size: PAGE_SIZE,
+        payload_size: PAGE_SIZE.assert_into(),
         block_no: 0,
         num_blocks: pages.len().assert_into(),
         file_size: RP2040_FAMILY_ID,
@@ -190,7 +191,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
     let last_page_num = pages.len() - 1;
 
     for (page_num, (target_addr, fragments)) in pages.into_iter().enumerate() {
-        block_header.target_addr = target_addr;
+        block_header.target_addr = target_addr.assert_into();
         block_header.block_no = page_num.assert_into();
 
         #[allow(clippy::unnecessary_cast)]
@@ -205,7 +206,7 @@ fn elf2uf2(mut input: impl Read + Seek, mut output: impl Write) -> Result<(), Bo
 
         block_data.iter_mut().for_each(|v| *v = 0);
 
-        realize_page(&mut input, &fragments, &mut block_data)?;
+        realize_page(&mut elf_file, &fragments, &mut block_data)?;
 
         output.write_all(block_header.as_bytes())?;
         output.write_all(block_data.as_bytes())?;
