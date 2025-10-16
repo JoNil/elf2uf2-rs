@@ -72,12 +72,12 @@ pub fn realize_page<E: EndianParse, S: Read + Seek>(
 pub enum AddressRangesFromElfError {
     #[error("No segments in ELF")]
     NoSegments,
-    #[error("In memory segments overlap")]
-    MemorySegmentsOverlap,
+    #[error("In-memory segments overlap")]
+    SegmentsOverlap,
     #[error("ELF contains memory contents for uninitialized memory at {0:08x}")]
-    MemoryContentsForUninitializedMemory(u64),
+    ContentsForUninitializedMemory(u64),
     #[error("Memory segment {0:#08x}->{1:#08x} is outside of valid address range for device")]
-    MemorySegmentInvalidForDevice(u64, u64),
+    SegmentInvalidForDevice(u64, u64),
 }
 
 pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
@@ -108,9 +108,9 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
         for range in self.clone().into_iter() {
             if range.from <= addr && range.to >= addr + size {
                 if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
-                    return Err(
-                        AddressRangesFromElfError::MemoryContentsForUninitializedMemory(addr),
-                    );
+                    return Err(AddressRangesFromElfError::ContentsForUninitializedMemory(
+                        addr,
+                    ));
                 }
                 if Opts::global().verbose {
                     println!(
@@ -129,7 +129,7 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
                 return Ok(*range);
             }
         }
-        Err(AddressRangesFromElfError::MemorySegmentInvalidForDevice(
+        Err(AddressRangesFromElfError::SegmentInvalidForDevice(
             addr,
             addr + size,
         ))
@@ -177,7 +177,7 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
                             if (off < fragment.page_offset + fragment.bytes)
                                 != ((off + len) <= fragment.page_offset)
                             {
-                                return Err(AddressRangesFromElfError::MemorySegmentsOverlap);
+                                return Err(AddressRangesFromElfError::SegmentsOverlap);
                             }
                         }
                         fragments.push(PageFragment {
