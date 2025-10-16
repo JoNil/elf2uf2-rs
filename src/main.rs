@@ -96,8 +96,8 @@ pub enum Elf2Uf2Error {
 }
 
 fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf2Error> {
-    let mut elf_file = ElfStream::<AnyEndian, _>::open_stream(input)
-        .map_err(|err| Elf2Uf2Error::FailedToOpenElfFile(err))?;
+    let mut elf_file =
+        ElfStream::<AnyEndian, _>::open_stream(input).map_err(Elf2Uf2Error::FailedToOpenElfFile)?;
 
     let ram_style = is_ram_binary(&elf_file).ok_or(Elf2Uf2Error::EntryPointNotMapped)?;
 
@@ -117,7 +117,7 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
 
     let mut pages = valid_ranges
         .check_elf32_ph_entries(&elf_file)
-        .map_err(|err| Elf2Uf2Error::FailedToGetPagesFromRanges(err))?;
+        .map_err(Elf2Uf2Error::FailedToGetPagesFromRanges)?;
 
     if pages.is_empty() {
         return Err(Elf2Uf2Error::InputFileNoMemoryPages);
@@ -229,17 +229,17 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
         block_data.iter_mut().for_each(|v| *v = 0);
 
         realize_page(&mut elf_file, &fragments, &mut block_data)
-            .map_err(|err| Elf2Uf2Error::FailedToRealizePages(err))?;
+            .map_err(Elf2Uf2Error::FailedToRealizePages)?;
 
         output
             .write_all(block_header.as_bytes())
-            .map_err(|err| Elf2Uf2Error::FailedToWrite(err))?;
+            .map_err(Elf2Uf2Error::FailedToWrite)?;
         output
             .write_all(block_data.as_bytes())
-            .map_err(|err| Elf2Uf2Error::FailedToWrite(err))?;
+            .map_err(Elf2Uf2Error::FailedToWrite)?;
         output
             .write_all(block_footer.as_bytes())
-            .map_err(|err| Elf2Uf2Error::FailedToWrite(err))?;
+            .map_err(Elf2Uf2Error::FailedToWrite)?;
 
         if page_num != last_page_num {
             if let Some(pb) = &mut pb {
