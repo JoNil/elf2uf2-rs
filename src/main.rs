@@ -78,25 +78,28 @@ static OPTS: OnceLock<Opts> = OnceLock::new();
 #[derive(Error, Debug)]
 pub enum Elf2Uf2Error {
     #[error("Failed to get address ranges from elf")]
-    AddressRangesError(#[from] AddressRangesFromElfError),
-    #[error("Failed to parse elf file")]
-    ElfParseError(#[from] ParseError),
-    #[error("Failed to realize pages")]
-    RealizePageError(#[from] std::io::Error),
+    FailedToGetPagesFromRanges(AddressRangesFromElfError),
+    #[error("Failed to open elf file")]
+    FailedToOpenElfFile(ParseError),
+    #[error("Failed to realize pages for elf file")]
+    FailedToRealizePages(ParseError),
+    #[error("Failed to write to output")]
+    FailedToWrite(std::io::Error),
     #[error("The input file has no memory pages")]
-    InputFileNoMemoryPagesError,
+    InputFileNoMemoryPages,
     #[error("B0/B1 Boot ROM does not support direct entry into XIP_SRAM")]
-    DirectEntryIntoXipSramError,
+    DirectEntryIntoXipSram,
     #[error("A RAM binary should have an entry point at the beginning: {0:#08x} (not {1:#08x})")]
-    RamBinaryEntryPointError(u32, u32),
+    RamBinaryEntryPoint(u32, u32),
     #[error("entry point is not in mapped part of file")]
-    EntryPointNotMappedError,
+    EntryPointNotMapped,
 }
 
 fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf2Error> {
-    let mut elf_file = ElfStream::<AnyEndian, _>::open_stream(input)?;
+    let mut elf_file = ElfStream::<AnyEndian, _>::open_stream(input)
+        .map_err(|err| Elf2Uf2Error::FailedToOpenElfFile(err))?;
 
-    let ram_style = is_ram_binary(&elf_file).ok_or(Elf2Uf2Error::EntryPointNotMappedError)?;
+    let ram_style = is_ram_binary(&elf_file).ok_or(Elf2Uf2Error::EntryPointNotMapped)?;
 
     if Opts::global().verbose {
         if ram_style {
@@ -112,10 +115,12 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let mut pages = valid_ranges.check_elf32_ph_entries(&elf_file)?;
+    let mut pages = valid_ranges
+        .check_elf32_ph_entries(&elf_file)
+        .map_err(|err| Elf2Uf2Error::FailedToGetPagesFromRanges(err))?;
 
     if pages.is_empty() {
-        return Err(Elf2Uf2Error::InputFileNoMemoryPagesError);
+        return Err(Elf2Uf2Error::InputFileNoMemoryPages);
     }
 
     if ram_style {
@@ -138,10 +143,10 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
         };
 
         if expected_ep == expected_ep_xip_sram {
-            return Err(Elf2Uf2Error::DirectEntryIntoXipSramError);
+            return Err(Elf2Uf2Error::DirectEntryIntoXipSram);
         } else if elf_file.ehdr.e_entry != expected_ep {
             #[allow(clippy::unnecessary_cast)]
-            return Err(Elf2Uf2Error::RamBinaryEntryPointError(
+            return Err(Elf2Uf2Error::RamBinaryEntryPoint(
                 expected_ep as u32,
                 elf_file.ehdr.e_entry as u32,
             ));
@@ -223,11 +228,18 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
 
         block_data.iter_mut().for_each(|v| *v = 0);
 
-        realize_page(&mut elf_file, &fragments, &mut block_data)?;
+        realize_page(&mut elf_file, &fragments, &mut block_data)
+            .map_err(|err| Elf2Uf2Error::FailedToRealizePages(err))?;
 
-        output.write_all(block_header.as_bytes())?;
-        output.write_all(block_data.as_bytes())?;
-        output.write_all(block_footer.as_bytes())?;
+        output
+            .write_all(block_header.as_bytes())
+            .map_err(|err| Elf2Uf2Error::FailedToWrite(err))?;
+        output
+            .write_all(block_data.as_bytes())
+            .map_err(|err| Elf2Uf2Error::FailedToWrite(err))?;
+        output
+            .write_all(block_footer.as_bytes())
+            .map_err(|err| Elf2Uf2Error::FailedToWrite(err))?;
 
         if page_num != last_page_num {
             if let Some(pb) = &mut pb {
