@@ -1,6 +1,6 @@
 use crate::{
     address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START},
-    elf::{is_ram_binary, AddressRangesFromElfError, PageFragment},
+    elf::{is_ram_binary, AddressRangesFromElfError, PageMap},
     reporter::ProgressBarReporter,
 };
 use ::elf::{endian::AnyEndian, ElfStream, ParseError};
@@ -14,7 +14,7 @@ use env_logger::Env;
 use log::{debug, info, Level, LevelFilter};
 use static_assertions::const_assert;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     error::Error,
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, Write},
@@ -81,9 +81,7 @@ pub enum Elf2Uf2Error {
     EntryPointNotMapped,
 }
 
-fn build_page_map(
-    elf: &ElfStream<AnyEndian, impl Read + Seek>,
-) -> Result<BTreeMap<u64, Vec<PageFragment>>, Elf2Uf2Error> {
+fn build_page_map(elf: &ElfStream<AnyEndian, impl Read + Seek>) -> Result<PageMap, Elf2Uf2Error> {
     let ram_style = is_ram_binary(elf).ok_or(Elf2Uf2Error::EntryPointNotMapped)?;
 
     if ram_style {
@@ -167,7 +165,7 @@ fn build_page_map(
 
 fn write_output(
     elf_file: &mut ElfStream<AnyEndian, impl Read + Seek>,
-    pages: &BTreeMap<u64, Vec<PageFragment>>,
+    pages: &PageMap,
     mut output: impl Write,
 ) -> Result<(), Elf2Uf2Error> {
     let mut block_header = Uf2BlockHeader {
@@ -288,7 +286,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let pages = build_page_map(&elf)?;
 
     let result = if should_print_progress {
-        let len = pages.len() as u64 * PAGE_SIZE;
+        let len = pages.len() as u64 * 512;
         write_output(&mut elf, &pages, ProgressBarReporter::new(len, writer))
     } else {
         write_output(&mut elf, &pages, writer)

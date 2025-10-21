@@ -14,6 +14,8 @@ use thiserror::Error;
 pub const LOG2_PAGE_SIZE: u64 = 8;
 pub const PAGE_SIZE: u64 = 1 << LOG2_PAGE_SIZE;
 
+pub type PageMap = BTreeMap<u64, Vec<PageFragment>>;
+
 // "determine_binary_type"
 pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(file: &ElfStream<E, S>) -> Option<bool> {
     let entry = file.ehdr.e_entry;
@@ -136,8 +138,8 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
     fn check_elf32_ph_entries<E: EndianParse, S: Read + Seek>(
         &self,
         file: &ElfStream<E, S>,
-    ) -> Result<BTreeMap<u64, Vec<PageFragment>>, AddressRangesFromElfError> {
-        let mut pages = BTreeMap::<u64, Vec<PageFragment>>::new();
+    ) -> Result<PageMap, AddressRangesFromElfError> {
+        let mut pages = PageMap::new();
 
         for segment in file.segments() {
             if segment.p_type == PT_LOAD && segment.p_memsz > 0 {
