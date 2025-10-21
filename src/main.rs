@@ -1,7 +1,7 @@
 use crate::{
     address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START},
     elf::{is_ram_binary, AddressRangesFromElfError},
-    reporter::{ProgressBarReporter, ProgressReporter},
+    reporter::ProgressBarReporter,
 };
 use ::elf::{endian::AnyEndian, ElfStream, ParseError};
 use address_range::{
@@ -81,11 +81,7 @@ pub enum Elf2Uf2Error {
     EntryPointNotMapped,
 }
 
-fn elf2uf2(
-    input: impl Read + Seek,
-    mut output: impl Write,
-    mut reporter: impl ProgressReporter,
-) -> Result<(), Elf2Uf2Error> {
+fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf2Error> {
     let mut elf_file =
         ElfStream::<AnyEndian, _>::open_stream(input).map_err(Elf2Uf2Error::FailedToOpenElfFile)?;
 
@@ -184,10 +180,6 @@ fn elf2uf2(
         magic_end: UF2_MAGIC_END,
     };
 
-    reporter.start(pages.len() * 512);
-
-    let last_page_num = pages.len() - 1;
-
     for (page_num, (target_addr, fragments)) in pages.into_iter().enumerate() {
         block_header.target_addr = target_addr.assert_into();
         block_header.block_no = page_num.assert_into();
@@ -213,18 +205,7 @@ fn elf2uf2(
         output
             .write_all(block_footer.as_bytes())
             .map_err(Elf2Uf2Error::FailedToWrite)?;
-
-        if page_num != last_page_num {
-            reporter.advance(512);
-        }
     }
-
-    // Drop the output before the progress bar is allowd to finish
-    drop(output);
-
-    reporter.advance(512);
-
-    reporter.finish();
 
     Ok(())
 }
@@ -257,10 +238,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "serial")]
     let serial_ports_before = serialport::available_ports()?;
 
-    let mut deployed_path = None;
     let input = BufReader::new(File::open(&options.input)?);
 
-    let output = if options.deploy {
+    let (output, output_path) = if options.deploy {
         let disks = Disks::new_with_refreshed_list();
 
         let mut pico_drive = None;
@@ -275,25 +255,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         if let Some(pico_drive) = pico_drive {
-            deployed_path = Some(pico_drive.join("out.uf2"));
-            File::create(deployed_path.as_ref().unwrap())?
+            let path = pico_drive.join("out.uf2");
+            (File::create(&path)?, path)
         } else {
             return Err("Unable to find mounted pico".into());
         }
     } else {
-        File::create(&output_path)?
+        (File::create(&output_path)?, output_path)
     };
 
-    if let Err(err) = elf2uf2(
-        input,
-        BufWriter::new(output),
-        ProgressBarReporter::new(options.deploy),
-    ) {
-        if options.deploy {
-            fs::remove_file(deployed_path.unwrap())?;
-        } else {
-            fs::remove_file(&output_path)?;
-        }
+    let writer = BufWriter::new(output);
+    let should_print_progress = log::max_level() >= LevelFilter::Info;
+
+    let result = if should_print_progress {
+        elf2uf2(input, ProgressBarReporter::new(0, writer))
+    } else {
+        elf2uf2(input, writer)
+    };
+
+    if let Err(err) = result {
+        fs::remove_file(output_path)?;
         return Err(Box::new(err));
     }
 
@@ -389,8 +370,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::reporter::NoProgress;
-
     use super::*;
     use std::io;
 
@@ -398,7 +377,7 @@ mod tests {
     pub fn hello_usb() {
         let bytes_in = io::Cursor::new(&include_bytes!("../hello_usb.elf")[..]);
         let mut bytes_out = Vec::new();
-        elf2uf2(bytes_in, &mut bytes_out, NoProgress).unwrap();
+        elf2uf2(bytes_in, &mut bytes_out).unwrap();
 
         assert_eq!(bytes_out, include_bytes!("../hello_usb.uf2"));
     }
@@ -407,7 +386,7 @@ mod tests {
     pub fn hello_serial() {
         let bytes_in = io::Cursor::new(&include_bytes!("../hello_serial.elf")[..]);
         let mut bytes_out = Vec::new();
-        elf2uf2(bytes_in, &mut bytes_out, NoProgress).unwrap();
+        elf2uf2(bytes_in, &mut bytes_out).unwrap();
 
         assert_eq!(bytes_out, include_bytes!("../hello_serial.uf2"));
     }
