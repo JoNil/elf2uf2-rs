@@ -1,6 +1,6 @@
 use crate::{
     address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START},
-    elf::{is_ram_binary, AddressRangesFromElfError},
+    elf::{is_ram_binary, AddressRangesFromElfError, PageFragment},
     reporter::ProgressBarReporter,
 };
 use ::elf::{endian::AnyEndian, ElfStream, ParseError};
@@ -14,7 +14,7 @@ use env_logger::Env;
 use log::{debug, info, Level, LevelFilter};
 use static_assertions::const_assert;
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     error::Error,
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, Write},
@@ -81,11 +81,10 @@ pub enum Elf2Uf2Error {
     EntryPointNotMapped,
 }
 
-fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf2Error> {
-    let mut elf_file =
-        ElfStream::<AnyEndian, _>::open_stream(input).map_err(Elf2Uf2Error::FailedToOpenElfFile)?;
-
-    let ram_style = is_ram_binary(&elf_file).ok_or(Elf2Uf2Error::EntryPointNotMapped)?;
+fn build_page_map(
+    elf: &ElfStream<AnyEndian, impl Read + Seek>,
+) -> Result<BTreeMap<u64, Vec<PageFragment>>, Elf2Uf2Error> {
+    let ram_style = is_ram_binary(elf).ok_or(Elf2Uf2Error::EntryPointNotMapped)?;
 
     if ram_style {
         debug!("Detected RAM binary");
@@ -100,7 +99,7 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
     };
 
     let mut pages = valid_ranges
-        .check_elf32_ph_entries(&elf_file)
+        .check_elf32_ph_entries(elf)
         .map_err(Elf2Uf2Error::FailedToGetPagesFromRanges)?;
 
     if pages.is_empty() {
@@ -128,11 +127,11 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
 
         if expected_ep == expected_ep_xip_sram {
             return Err(Elf2Uf2Error::DirectEntryIntoXipSram);
-        } else if elf_file.ehdr.e_entry != expected_ep {
+        } else if elf.ehdr.e_entry != expected_ep {
             #[allow(clippy::unnecessary_cast)]
             return Err(Elf2Uf2Error::RamBinaryEntryPoint(
                 expected_ep as u32,
-                elf_file.ehdr.e_entry as u32,
+                elf.ehdr.e_entry as u32,
             ));
         }
         const_assert!(0 == (MAIN_RAM_START & (PAGE_SIZE - 1)));
@@ -163,6 +162,14 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
         }
     }
 
+    Ok(pages)
+}
+
+fn write_output(
+    elf_file: &mut ElfStream<AnyEndian, impl Read + Seek>,
+    pages: &BTreeMap<u64, Vec<PageFragment>>,
+    mut output: impl Write,
+) -> Result<(), Elf2Uf2Error> {
     let mut block_header = Uf2BlockHeader {
         magic_start0: UF2_MAGIC_START0,
         magic_start1: UF2_MAGIC_START1,
@@ -180,20 +187,20 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
         magic_end: UF2_MAGIC_END,
     };
 
-    for (page_num, (target_addr, fragments)) in pages.into_iter().enumerate() {
-        block_header.target_addr = target_addr.assert_into();
+    for (page_num, (target_addr, fragments)) in pages.iter().enumerate() {
+        block_header.target_addr = (*target_addr).assert_into();
         block_header.block_no = page_num.assert_into();
 
         debug!(
             "Page {} / {} {:#08x}",
-            block_header.block_no as u32,
-            block_header.num_blocks as u32,
-            block_header.target_addr as u32
+            { block_header.block_no },
+            { block_header.num_blocks },
+            { block_header.target_addr }
         );
 
         block_data.iter_mut().for_each(|v| *v = 0);
 
-        realize_page(&mut elf_file, &fragments, &mut block_data)
+        realize_page(elf_file, fragments, &mut block_data)
             .map_err(Elf2Uf2Error::FailedToRealizePages)?;
 
         output
@@ -208,6 +215,17 @@ fn elf2uf2(input: impl Read + Seek, mut output: impl Write) -> Result<(), Elf2Uf
     }
 
     Ok(())
+}
+
+fn open_elf<T: Read + Seek>(input: T) -> Result<ElfStream<AnyEndian, T>, Elf2Uf2Error> {
+    ElfStream::<AnyEndian, _>::open_stream(input).map_err(Elf2Uf2Error::FailedToOpenElfFile)
+}
+
+#[cfg_attr(not(test), expect(unused))]
+fn elf2uf2(input: impl Read + Seek, output: impl Write) -> Result<(), Elf2Uf2Error> {
+    let mut elf = open_elf(input)?;
+    let pages = build_page_map(&elf)?;
+    write_output(&mut elf, &pages, output)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -265,12 +283,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let writer = BufWriter::new(output);
+    let mut elf = open_elf(input)?;
     let should_print_progress = log::max_level() >= LevelFilter::Info;
+    let pages = build_page_map(&elf)?;
 
     let result = if should_print_progress {
-        elf2uf2(input, ProgressBarReporter::new(0, writer))
+        let len = pages.len() as u64 * PAGE_SIZE;
+        write_output(&mut elf, &pages, ProgressBarReporter::new(len, writer))
     } else {
-        elf2uf2(input, writer)
+        write_output(&mut elf, &pages, writer)
     };
 
     if let Err(err) = result {
