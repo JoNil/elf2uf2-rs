@@ -287,7 +287,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let result = if should_print_progress {
         let len = pages.len() as u64 * 512;
-        write_output(&mut elf, &pages, ProgressBarReporter::new(len, writer))
+        let mut reporter = ProgressBarReporter::new(len, writer);
+        let result = write_output(&mut elf, &pages, &mut reporter);
+        reporter.finish();
+        result
     } else {
         write_output(&mut elf, &pages, writer)
     };

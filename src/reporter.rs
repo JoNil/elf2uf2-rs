@@ -18,6 +18,10 @@ where
 
         Self { pb, inner }
     }
+
+    pub fn finish(&mut self) {
+        self.pb.finish();
+    }
 }
 
 impl<T> std::io::Write for ProgressBarReporter<T>
@@ -32,11 +36,5 @@ where
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
-    }
-}
-
-impl<T> Drop for ProgressBarReporter<T> {
-    fn drop(&mut self) {
-        self.pb.finish();
     }
 }
