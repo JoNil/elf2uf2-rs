@@ -1,21 +1,27 @@
-use crate::address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START};
+use crate::{
+    address_range::{MAIN_RAM_END, XIP_SRAM_END, XIP_SRAM_START},
+    elf::{is_ram_binary, AddressRangesFromElfError, PageMap},
+    reporter::ProgressBarReporter,
+};
+use ::elf::{endian::AnyEndian, ElfStream, ParseError};
 use address_range::{
     FLASH_SECTOR_ERASE_SIZE, MAIN_RAM_START, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
 };
 use assert_into::AssertInto;
 use clap::Parser;
-use elf::{realize_page, AddressRangesExt, Elf32Header, PAGE_SIZE};
-use pbr::{ProgressBar, Units};
+use elf::{realize_page, AddressRangesExt, PAGE_SIZE};
+use env_logger::Env;
+use log::{debug, info, Level, LevelFilter};
 use static_assertions::const_assert;
 use std::{
     collections::HashSet,
     error::Error,
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Seek, Write},
-    path::{Path, PathBuf},
-    sync::OnceLock,
+    path::Path,
 };
 use sysinfo::Disks;
+use thiserror::Error;
 use uf2::{
     Uf2BlockData, Uf2BlockFooter, Uf2BlockHeader, RP2040_FAMILY_ID, UF2_FLAG_FAMILY_ID_PRESENT,
     UF2_MAGIC_END, UF2_MAGIC_START0, UF2_MAGIC_START1,
@@ -24,6 +30,7 @@ use zerocopy::IntoBytes;
 
 mod address_range;
 mod elf;
+mod reporter;
 mod uf2;
 
 #[derive(Parser, Debug, Default)]
@@ -58,50 +65,33 @@ struct Opts {
     output: Option<String>,
 }
 
-// allow user to pass hex formatted numbers (typically the format used by family ids)
-fn num_parser(s: &str) -> Result<u32, &'static str> {
-    match s.get(0..2) {
-        Some("0x") => u32::from_str_radix(&s[2..], 16).map_err(|_| "invalid hex number"),
-        Some("0b") => u32::from_str_radix(&s[2..], 2).map_err(|_| "invalid binary number"),
-        _ => s.parse::<u32>().map_err(|_| "invalid decimal number"),
-    }
+#[derive(Error, Debug)]
+pub enum Elf2Uf2Error {
+    #[error("Failed to get address ranges from elf")]
+    FailedToGetPagesFromRanges(AddressRangesFromElfError),
+    #[error("Failed to open elf file")]
+    FailedToOpenElfFile(ParseError),
+    #[error("Failed to realize pages for elf file")]
+    FailedToRealizePages(ParseError),
+    #[error("Failed to write to output")]
+    FailedToWrite(std::io::Error),
+    #[error("The input file has no memory pages")]
+    InputFileNoMemoryPages,
+    #[error("B0/B1 Boot ROM does not support direct entry into XIP_SRAM")]
+    DirectEntryIntoXipSram,
+    #[error("A RAM binary should have an entry point at the beginning: {0:#08x} (not {1:#08x})")]
+    RamBinaryEntryPoint(u32, u32),
+    #[error("entry point is not in mapped part of file")]
+    EntryPointNotMapped,
 }
 
-impl Opts {
-    fn output_path(&self) -> PathBuf {
-        if let Some(output) = &self.output {
-            Path::new(output).with_extension("uf2")
-        } else {
-            Path::new(&self.input).with_extension("uf2")
-        }
-    }
+fn build_page_map(elf: &ElfStream<AnyEndian, impl Read + Seek>) -> Result<PageMap, Elf2Uf2Error> {
+    let ram_style = is_ram_binary(elf).ok_or(Elf2Uf2Error::EntryPointNotMapped)?;
 
-    fn global() -> &'static Opts {
-        OPTS.get().expect("Opts is not initialized")
-    }
-}
-
-static OPTS: OnceLock<Opts> = OnceLock::new();
-
-fn elf2uf2(
-    mut input: impl Read + Seek,
-    mut output: impl Write,
-    family_id: u32,
-) -> Result<(), Box<dyn Error>> {
-    let eh = Elf32Header::from_read(&mut input)?;
-
-    let entries = eh.read_elf32_ph_entries(&mut input)?;
-
-    let ram_style = eh
-        .is_ram_binary(&entries)
-        .ok_or("entry point is not in mapped part of file".to_string())?;
-
-    if Opts::global().verbose {
-        if ram_style {
-            println!("Detected RAM binary");
-        } else {
-            println!("Detected FLASH binary");
-        }
+    if ram_style {
+        debug!("Detected RAM binary");
+    } else {
+        debug!("Detected FLASH binary");
     }
 
     let valid_ranges = if ram_style {
@@ -110,15 +100,17 @@ fn elf2uf2(
         RP2040_ADDRESS_RANGES_FLASH
     };
 
-    let mut pages = valid_ranges.check_elf32_ph_entries(&entries)?;
+    let mut pages = valid_ranges
+        .check_elf32_ph_entries(elf)
+        .map_err(Elf2Uf2Error::FailedToGetPagesFromRanges)?;
 
     if pages.is_empty() {
-        return Err("The input file has no memory pages".into());
+        return Err(Elf2Uf2Error::InputFileNoMemoryPages);
     }
 
     if ram_style {
-        let mut expected_ep_main_ram = u32::MAX;
-        let mut expected_ep_xip_sram = u32::MAX;
+        let mut expected_ep_main_ram = u32::MAX as u64;
+        let mut expected_ep_xip_sram = u32::MAX as u64;
 
         #[allow(clippy::manual_range_contains)]
         pages.keys().copied().for_each(|addr| {
@@ -129,21 +121,20 @@ fn elf2uf2(
             }
         });
 
-        let expected_ep = if expected_ep_main_ram != u32::MAX {
+        let expected_ep = if expected_ep_main_ram != u32::MAX as u64 {
             expected_ep_main_ram
         } else {
             expected_ep_xip_sram
         };
 
         if expected_ep == expected_ep_xip_sram {
-            return Err("B0/B1 Boot ROM does not support direct entry into XIP_SRAM".into());
-        } else if eh.entry != expected_ep {
+            return Err(Elf2Uf2Error::DirectEntryIntoXipSram);
+        } else if elf.ehdr.e_entry != expected_ep {
             #[allow(clippy::unnecessary_cast)]
-            return Err(format!(
-                "A RAM binary should have an entry point at the beginning: {:#08x} (not {:#08x})",
-                expected_ep, eh.entry as u32
-            )
-            .into());
+            return Err(Elf2Uf2Error::RamBinaryEntryPoint(
+                expected_ep as u32,
+                elf.ehdr.e_entry as u32,
+            ));
         }
         const_assert!(0 == (MAIN_RAM_START & (PAGE_SIZE - 1)));
 
@@ -155,7 +146,7 @@ fn elf2uf2(
         // That workaround is required because the bootrom uses the block number for erase sector calculations:
         // https://github.com/raspberrypi/pico-bootrom/blob/c09c7f08550e8a36fc38dc74f8873b9576de99eb/bootrom/virtual_disk.c#L205
 
-        let touched_sectors: HashSet<u32> = pages
+        let touched_sectors: HashSet<u64> = pages
             .keys()
             .map(|addr| addr / FLASH_SECTOR_ERASE_SIZE)
             .collect();
@@ -173,12 +164,20 @@ fn elf2uf2(
         }
     }
 
+    Ok(pages)
+}
+
+fn write_output(
+    elf_file: &mut ElfStream<AnyEndian, impl Read + Seek>,
+    pages: &PageMap,
+    mut output: impl Write,
+) -> Result<(), Elf2Uf2Error> {
     let mut block_header = Uf2BlockHeader {
         magic_start0: UF2_MAGIC_START0,
         magic_start1: UF2_MAGIC_START1,
         flags: UF2_FLAG_FAMILY_ID_PRESENT,
         target_addr: 0,
-        payload_size: PAGE_SIZE,
+        payload_size: PAGE_SIZE.assert_into(),
         block_no: 0,
         num_blocks: pages.len().assert_into(),
         file_size: family_id,
@@ -190,71 +189,78 @@ fn elf2uf2(
         magic_end: UF2_MAGIC_END,
     };
 
-    if Opts::global().deploy {
-        println!("Transfering program to pico");
-    }
-
-    let mut pb = if !Opts::global().verbose && Opts::global().deploy {
-        Some(ProgressBar::new((pages.len() * 512).assert_into()))
-    } else {
-        None
-    };
-
-    if let Some(pb) = &mut pb {
-        pb.set_units(Units::Bytes);
-    }
-
-    let last_page_num = pages.len() - 1;
-
-    for (page_num, (target_addr, fragments)) in pages.into_iter().enumerate() {
-        block_header.target_addr = target_addr;
+    for (page_num, (target_addr, fragments)) in pages.iter().enumerate() {
+        block_header.target_addr = (*target_addr).assert_into();
         block_header.block_no = page_num.assert_into();
 
-        #[allow(clippy::unnecessary_cast)]
-        if Opts::global().verbose {
-            println!(
-                "Page {} / {} {:#08x}",
-                block_header.block_no as u32,
-                block_header.num_blocks as u32,
-                block_header.target_addr as u32
-            );
-        }
+        debug!(
+            "Page {} / {} {:#08x}",
+            { block_header.block_no },
+            { block_header.num_blocks },
+            { block_header.target_addr }
+        );
 
         block_data.iter_mut().for_each(|v| *v = 0);
 
-        realize_page(&mut input, &fragments, &mut block_data)?;
+        realize_page(elf_file, fragments, &mut block_data)
+            .map_err(Elf2Uf2Error::FailedToRealizePages)?;
 
-        output.write_all(block_header.as_bytes())?;
-        output.write_all(block_data.as_bytes())?;
-        output.write_all(block_footer.as_bytes())?;
-
-        if page_num != last_page_num {
-            if let Some(pb) = &mut pb {
-                pb.add(512);
-            }
-        }
-    }
-
-    // Drop the output before the progress bar is allowd to finish
-    drop(output);
-
-    if let Some(pb) = &mut pb {
-        pb.add(512);
+        output
+            .write_all(block_header.as_bytes())
+            .map_err(Elf2Uf2Error::FailedToWrite)?;
+        output
+            .write_all(block_data.as_bytes())
+            .map_err(Elf2Uf2Error::FailedToWrite)?;
+        output
+            .write_all(block_footer.as_bytes())
+            .map_err(Elf2Uf2Error::FailedToWrite)?;
     }
 
     Ok(())
 }
 
+fn open_elf<T: Read + Seek>(input: T) -> Result<ElfStream<AnyEndian, T>, Elf2Uf2Error> {
+    ElfStream::<AnyEndian, _>::open_stream(input).map_err(Elf2Uf2Error::FailedToOpenElfFile)
+}
+
+#[cfg_attr(not(test), expect(unused))]
+fn elf2uf2(input: impl Read + Seek, output: impl Write) -> Result<(), Elf2Uf2Error> {
+    let mut elf = open_elf(input)?;
+    let pages = build_page_map(&elf)?;
+    write_output(&mut elf, &pages, output)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    OPTS.set(Opts::parse()).unwrap();
+    let options = Opts::parse();
+
+    env_logger::Builder::from_env(Env::default())
+        .filter_level(match options.verbose {
+            true => LevelFilter::Debug,
+            false => LevelFilter::Info,
+        })
+        .target(env_logger::Target::Stdout)
+        .format(|buf, record| {
+            let level = record.level();
+            if level == Level::Info {
+                writeln!(buf, "{}", record.args())
+            } else {
+                writeln!(buf, "{}: {}", record.level(), record.args())
+            }
+        })
+        .init();
+
+    let output_path = if let Some(output) = &options.output {
+        Path::new(output).with_extension("uf2")
+    } else {
+        Path::new(&options.input).with_extension("uf2")
+    };
 
     #[cfg(feature = "serial")]
     let serial_ports_before = serialport::available_ports()?;
 
-    let mut deployed_path = None;
-    let input = BufReader::new(File::open(&Opts::global().input)?);
+    let input = BufReader::new(File::open(&options.input)?);
 
-    let output = if Opts::global().deploy {
+    let (output, output_path) = if options.deploy {
         let disks = Disks::new_with_refreshed_list();
 
         let mut pico_drive = None;
@@ -262,41 +268,47 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mount = disk.mount_point();
 
             if mount.join("INFO_UF2.TXT").is_file() {
-                println!("Found pico uf2 disk {}", &mount.to_string_lossy());
+                info!("Found pico uf2 disk {}", &mount.to_string_lossy());
                 pico_drive = Some(mount.to_owned());
                 break;
             }
         }
 
         if let Some(pico_drive) = pico_drive {
-            deployed_path = Some(pico_drive.join("out.uf2"));
-            File::create(deployed_path.as_ref().unwrap())?
+            let path = pico_drive.join("out.uf2");
+            (File::create(&path)?, path)
         } else {
             return Err("Unable to find mounted pico".into());
         }
     } else {
-        File::create(Opts::global().output_path())?
+        (File::create(&output_path)?, output_path)
     };
 
-    let family_id = Opts::global().family;
-    if Opts::global().verbose {
-        println!("Using UF2 Family ID 0x{:x}", family_id);
-    }
+    let writer = BufWriter::new(output);
+    let mut elf = open_elf(input)?;
+    let should_print_progress = log::max_level() >= LevelFilter::Info;
+    let pages = build_page_map(&elf)?;
 
-    if let Err(err) = elf2uf2(input, BufWriter::new(output), family_id) {
-        if Opts::global().deploy {
-            fs::remove_file(deployed_path.unwrap())?;
-        } else {
-            fs::remove_file(Opts::global().output_path())?;
-        }
-        return Err(err);
+    let result = if should_print_progress {
+        let len = pages.len() as u64 * 512;
+        let mut reporter = ProgressBarReporter::new(len, writer);
+        let result = write_output(&mut elf, &pages, &mut reporter);
+        reporter.finish();
+        result
+    } else {
+        write_output(&mut elf, &pages, writer)
+    };
+
+    if let Err(err) = result {
+        fs::remove_file(output_path)?;
+        return Err(Box::new(err));
     }
 
     // New line after progress bar
     println!();
 
     #[cfg(feature = "serial")]
-    if Opts::global().serial {
+    if options.serial {
         use std::process;
         use std::sync::{Arc, Mutex};
         use std::time::Duration;
@@ -307,7 +319,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let serial_port_info = 'find_loop: loop {
             for port in serialport::available_ports()? {
                 if !serial_ports_before.contains(&port) {
-                    println!("Found pico serial on {}", &port.port_name);
+                    info!("Found pico serial on {}", &port.port_name);
                     break 'find_loop Some(port);
                 }
             }
@@ -334,13 +346,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                         let port = port.clone();
                         move || {
                             let mut port = port.lock().unwrap();
-                            port.write_all(b"elf2uf2-term\n\r").ok();
+                            port.write_all(b"elf2uf2-term\r\n").ok();
                             port.flush().ok();
                             process::exit(0);
                         }
                     };
 
-                    if Opts::global().term {
+                    if options.term {
                         ctrlc::set_handler(handler.clone()).expect("Error setting Ctrl-C handler");
                     }
 
@@ -363,7 +375,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 }
                                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
                                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {
-                                    if Opts::global().term {
+                                    if options.term {
                                         handler();
                                     }
                                     return Err(e.into());
@@ -389,10 +401,6 @@ mod tests {
 
     #[test]
     pub fn hello_usb() {
-        // Horrendous hack to get it to stop complaining about opts
-        // TODO: just pass opts by reference, or use log crate
-        OPTS.set(Default::default()).ok();
-
         let bytes_in = io::Cursor::new(&include_bytes!("../hello_usb.elf")[..]);
         let mut bytes_out = Vec::new();
         elf2uf2(bytes_in, &mut bytes_out, RP2040_FAMILY_ID).unwrap();
@@ -402,10 +410,6 @@ mod tests {
 
     #[test]
     pub fn hello_serial() {
-        // Horrendous hack to get it to stop complaining about opts
-        // TODO: just pass opts by reference, or use log crate
-        OPTS.set(Default::default()).ok();
-
         let bytes_in = io::Cursor::new(&include_bytes!("../hello_serial.elf")[..]);
         let mut bytes_out = Vec::new();
         elf2uf2(bytes_in, &mut bytes_out, RP2040_FAMILY_ID).unwrap();

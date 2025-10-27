@@ -11,12 +11,12 @@ pub enum AddressRangeType {
 #[derive(Copy, Clone, Debug)]
 pub struct AddressRange {
     pub typ: AddressRangeType,
-    pub to: u32,
-    pub from: u32,
+    pub to: u64,
+    pub from: u64,
 }
 
 impl AddressRange {
-    pub const fn new(from: u32, to: u32, typ: AddressRangeType) -> Self {
+    pub const fn new(from: u64, to: u64, typ: AddressRangeType) -> Self {
         Self { typ, to, from }
     }
 }
@@ -31,17 +31,17 @@ impl Default for AddressRange {
     }
 }
 
-pub const FLASH_SECTOR_ERASE_SIZE: u32 = 4096;
-pub const MAIN_RAM_START: u32 = 0x20000000;
-pub const MAIN_RAM_END: u32 = 0x20042000;
-pub const FLASH_START: u32 = 0x10000000;
-pub const FLASH_END: u32 = 0x15000000;
-pub const XIP_SRAM_START: u32 = 0x15000000;
-pub const XIP_SRAM_END: u32 = 0x15004000;
-pub const MAIN_RAM_BANKED_START: u32 = 0x21000000;
-pub const MAIN_RAM_BANKED_END: u32 = 0x21040000;
-pub const ROM_START: u32 = 0x00000000;
-pub const ROM_END: u32 = 0x00004000;
+pub const FLASH_SECTOR_ERASE_SIZE: u64 = 4096;
+pub const MAIN_RAM_START: u64 = 0x20000000;
+pub const MAIN_RAM_END: u64 = 0x20042000;
+pub const FLASH_START: u64 = 0x10000000;
+pub const FLASH_END: u64 = 0x15000000;
+pub const XIP_SRAM_START: u64 = 0x15000000;
+pub const XIP_SRAM_END: u64 = 0x15004000;
+pub const MAIN_RAM_BANKED_START: u64 = 0x21000000;
+pub const MAIN_RAM_BANKED_END: u64 = 0x21040000;
+pub const ROM_START: u64 = 0x00000000;
+pub const ROM_END: u64 = 0x00004000;
 
 pub const RP2040_ADDRESS_RANGES_FLASH: &[AddressRange] = &[
     AddressRange::new(FLASH_START, FLASH_END, AddressRangeType::Contents),

@@ -1,171 +1,95 @@
-use crate::{
-    address_range::{self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM},
-    Opts,
+use crate::address_range::{
+    self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
 };
 use assert_into::AssertInto;
+use elf::{abi::PT_LOAD, endian::EndianParse, segment::ProgramHeader, ElfStream, ParseError};
+use log::debug;
 use std::{
     cmp::min,
     collections::BTreeMap,
-    error::Error,
-    io::{Read, Seek, SeekFrom},
-    mem,
+    io::{Read, Seek},
 };
-use zerocopy::{FromBytes, IntoBytes};
+use thiserror::Error;
 
-const ELF_MAGIC: u32 = 0x464c457f;
-const PT_LOAD: u32 = 0x00000001;
+pub const LOG2_PAGE_SIZE: u64 = 8;
+pub const PAGE_SIZE: u64 = 1 << LOG2_PAGE_SIZE;
 
-pub const LOG2_PAGE_SIZE: u32 = 8;
-pub const PAGE_SIZE: u32 = 1 << LOG2_PAGE_SIZE;
+pub type PageMap = BTreeMap<u64, Vec<PageFragment>>;
 
-#[allow(unused)]
-#[repr(packed)]
-#[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
-pub struct ElfHeader {
-    pub magic: u32,
-    pub arch_class: u8,
-    pub endianness: u8,
-    pub version: u8,
-    pub abi: u8,
-    pub abi_version: u8,
-    pub pad: [u8; 7],
-    pub typ: u16,
-    pub machine: u16,
-    pub version2: u32,
-}
+// "determine_binary_type"
+pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(file: &ElfStream<E, S>) -> Option<bool> {
+    let entry = file.ehdr.e_entry;
 
-#[allow(unused)]
-#[repr(packed)]
-#[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
-pub struct Elf32Header {
-    pub common: ElfHeader,
-    pub entry: u32,
-    pub ph_offset: u32,
-    pub sh_offset: u32,
-    pub flags: u32,
-    pub eh_size: u16,
-    pub ph_entry_size: u16,
-    pub ph_num: u16,
-    pub sh_entry_size: u16,
-    pub sh_num: u16,
-    pub sh_str_index: u16,
-}
-
-impl Elf32Header {
-    // read_and_check_elf32_header
-    pub(crate) fn from_read(input: &mut impl Read) -> Result<Self, Box<dyn Error>> {
-        let mut eh = Elf32Header::default();
-
-        input.read_exact(eh.as_mut_bytes())?;
-
-        if eh.common.magic != ELF_MAGIC {
-            return Err("Not an ELF file".into());
-        }
-        if eh.common.version != 1 || eh.common.version2 != 1 {
-            return Err("Unrecognized ELF version".into());
-        }
-        if eh.common.arch_class != 1 || eh.common.endianness != 1 {
-            return Err("Require 32 bit little-endian ELF".into());
-        }
-        if eh.eh_size != mem::size_of::<Elf32Header>().assert_into() {
-            return Err("Invalid ELF32 format".into());
-        }
-        if eh.common.abi != 0 {
-            return Err("Unrecognized ABI".into());
-        }
-
-        Ok(eh)
-    }
-
-    pub(crate) fn read_elf32_ph_entries(
-        &self,
-        input: &mut impl Read,
-    ) -> Result<Vec<Elf32PhEntry>, Box<dyn Error>> {
-        if self.ph_entry_size != mem::size_of::<Elf32PhEntry>().assert_into() {
-            return Err("Invalid ELF32 program header".into());
-        }
-
-        let mut entries: Vec<Elf32PhEntry> = (0..self.ph_num).map(|_| Default::default()).collect();
-        input.read_exact(entries.as_mut_slice().as_mut_bytes())?;
-
-        Ok(entries)
-    }
-
-    // "determine_binary_type"
-    pub(crate) fn is_ram_binary(&self, entries: &[Elf32PhEntry]) -> Option<bool> {
-        for entry in entries {
-            if entry.typ == PT_LOAD && entry.memsz > 0 {
-                let mapped_size = entry.filez.min(entry.memsz);
-                if mapped_size > 0 {
-                    // We back-convert the entrypoint from a VADDR to a PADDR to see if it originates inflash, and if
-                    // so call THAT a flash binary
-                    if self.entry >= entry.vaddr && self.entry < entry.vaddr + mapped_size {
-                        let effective_entry = self.entry + entry.paddr - entry.vaddr;
-                        if RP2040_ADDRESS_RANGES_RAM.is_address_initialized(effective_entry) {
-                            return Some(true);
-                        } else if RP2040_ADDRESS_RANGES_FLASH
-                            .is_address_initialized(effective_entry)
-                        {
-                            return Some(false);
-                        }
+    for segment in file.segments() {
+        if segment.p_type == PT_LOAD && segment.p_memsz > 0 {
+            let mapped_size = segment.p_filesz.min(segment.p_memsz);
+            if mapped_size > 0 {
+                // We back-convert the entrypoint from a VADDR to a PADDR to see if it originates inflash, and if
+                // so call THAT a flash binary
+                if entry >= segment.p_vaddr && entry < segment.p_vaddr + mapped_size {
+                    let effective_entry = entry + segment.p_paddr - segment.p_vaddr;
+                    if RP2040_ADDRESS_RANGES_RAM.is_address_initialized(effective_entry) {
+                        return Some(true);
+                    } else if RP2040_ADDRESS_RANGES_FLASH.is_address_initialized(effective_entry) {
+                        return Some(false);
                     }
                 }
             }
         }
-
-        None
     }
+
+    None
 }
 
-#[allow(unused)]
-#[repr(packed)]
-#[derive(IntoBytes, Copy, Clone, Default, Debug, FromBytes)]
-pub struct Elf32PhEntry {
-    pub typ: u32,
-    pub offset: u32,
-    pub vaddr: u32,
-    pub paddr: u32,
-    pub filez: u32,
-    pub memsz: u32,
-    pub flags: u32,
-    pub align: u32,
-}
-
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct PageFragment {
-    pub file_offset: u32,
-    pub page_offset: u32,
-    pub bytes: u32,
+    pub segment: ProgramHeader,
+    pub file_offset: u64,
+    pub page_offset: u64,
+    pub bytes: u64,
 }
 
-pub fn realize_page(
-    input: &mut (impl Read + Seek),
+pub fn realize_page<E: EndianParse, S: Read + Seek>(
+    file: &mut ElfStream<E, S>,
     fragments: &[PageFragment],
     buf: &mut [u8],
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), ParseError> {
     assert!(buf.len() >= PAGE_SIZE.assert_into());
 
     for frag in fragments {
+        let data = file.segment_data(&frag.segment)?;
         assert!(frag.page_offset < PAGE_SIZE && frag.page_offset + frag.bytes <= PAGE_SIZE);
 
-        input.seek(SeekFrom::Start(frag.file_offset.assert_into()))?;
+        let start = (frag.file_offset - frag.segment.p_offset) as usize;
+        let end = start + frag.bytes as usize;
 
-        input.read_exact(
-            &mut buf[frag.page_offset.assert_into()..(frag.page_offset + frag.bytes).assert_into()],
-        )?;
+        buf[frag.page_offset.assert_into()..(frag.page_offset + frag.bytes).assert_into()]
+            .copy_from_slice(&data[start..end]);
     }
 
     Ok(())
 }
 
+#[derive(Error, Debug)]
+pub enum AddressRangesFromElfError {
+    #[error("No segments in ELF")]
+    NoSegments,
+    #[error("In-memory segments overlap")]
+    SegmentsOverlap,
+    #[error("ELF contains memory contents for uninitialized memory at {0:08x}")]
+    ContentsForUninitializedMemory(u64),
+    #[error("Memory segment {0:#08x}->{1:#08x} is outside of valid address range for device")]
+    SegmentInvalidForDevice(u64, u64),
+}
+
 pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
-    fn range_for(&self, addr: u32) -> Option<&'a AddressRange> {
+    fn range_for(&self, addr: u64) -> Option<&'a AddressRange> {
         self.clone()
             .into_iter()
             .find(|r| r.from <= addr && r.to > addr)
     }
 
-    fn is_address_initialized(&self, addr: u32) -> bool {
+    fn is_address_initialized(&self, addr: u64) -> bool {
         let range = if let Some(range) = self.range_for(addr) {
             range
         } else {
@@ -178,68 +102,65 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
     // "check_address_range"
     fn check_address_range(
         &self,
-        addr: u32,
-        vaddr: u32,
-        size: u32,
+        addr: u64,
+        vaddr: u64,
+        size: u64,
         uninitialized: bool,
-    ) -> Result<AddressRange, Box<dyn Error>> {
+    ) -> Result<AddressRange, AddressRangesFromElfError> {
         for range in self.clone().into_iter() {
             if range.from <= addr && range.to >= addr + size {
                 if range.typ == address_range::AddressRangeType::NoContents && !uninitialized {
-                    return Err(format!(
-                        "ELF contains memory contents for uninitialized memory at {addr:08x}"
-                    )
-                    .into());
-                }
-                if Opts::global().verbose {
-                    println!(
-                        "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
-                        if uninitialized {
-                            "Uninitialized"
-                        } else {
-                            "Mapped"
-                        },
+                    return Err(AddressRangesFromElfError::ContentsForUninitializedMemory(
                         addr,
-                        addr + size,
-                        vaddr,
-                        vaddr + size
-                    );
+                    ));
                 }
+                debug!(
+                    "{} segment {:#08x}->{:#08x} ({:#08x}->{:#08x})",
+                    if uninitialized {
+                        "Uninitialized"
+                    } else {
+                        "Mapped"
+                    },
+                    addr,
+                    addr + size,
+                    vaddr,
+                    vaddr + size
+                );
                 return Ok(*range);
             }
         }
-        Err(format!(
-            "Memory segment {:#08x}->{:#08x} is outside of valid address range for device",
+        Err(AddressRangesFromElfError::SegmentInvalidForDevice(
             addr,
-            addr + size
-        )
-        .into())
+            addr + size,
+        ))
     }
 
-    fn check_elf32_ph_entries(
+    fn check_elf32_ph_entries<E: EndianParse, S: Read + Seek>(
         &self,
-        entries: &[Elf32PhEntry],
-    ) -> Result<BTreeMap<u32, Vec<PageFragment>>, Box<dyn Error>> {
-        let mut pages = BTreeMap::<u32, Vec<PageFragment>>::new();
+        file: &ElfStream<E, S>,
+    ) -> Result<PageMap, AddressRangesFromElfError> {
+        let mut pages = PageMap::new();
 
-        for entry in entries {
-            if entry.typ == PT_LOAD && entry.memsz > 0 {
-                let mapped_size = min(entry.filez, entry.memsz);
+        for segment in file.segments() {
+            if segment.p_type == PT_LOAD && segment.p_memsz > 0 {
+                let mapped_size = min(segment.p_filesz, segment.p_memsz);
 
                 if mapped_size > 0 {
-                    let ar =
-                        self.check_address_range(entry.paddr, entry.vaddr, mapped_size, false)?;
+                    let ar = self.check_address_range(
+                        segment.p_paddr,
+                        segment.p_vaddr,
+                        mapped_size,
+                        false,
+                    )?;
 
                     // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
                     if ar.typ != address_range::AddressRangeType::Contents {
-                        if Opts::global().verbose {
-                            println!("ignored");
-                        }
+                        debug!("ignored");
                         continue;
                     }
-                    let mut addr = entry.paddr;
+                    let mut addr = segment.p_paddr;
                     let mut remaining = mapped_size;
-                    let mut file_offset = entry.offset;
+                    let mut file_offset = segment.p_offset;
                     while remaining > 0 {
                         let off = addr & (PAGE_SIZE - 1);
                         let len = min(remaining, PAGE_SIZE - off);
@@ -254,10 +175,11 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
                             if (off < fragment.page_offset + fragment.bytes)
                                 != ((off + len) <= fragment.page_offset)
                             {
-                                return Err("In memory segments overlap".into());
+                                return Err(AddressRangesFromElfError::SegmentsOverlap);
                             }
                         }
                         fragments.push(PageFragment {
+                            segment: *segment,
                             file_offset,
                             page_offset: off,
                             bytes: len,
@@ -266,12 +188,12 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
                         file_offset += len;
                         remaining -= len;
                     }
-                    if entry.memsz > entry.filez {
+                    if segment.p_memsz > segment.p_filesz {
                         // we have some uninitialized data too
                         self.check_address_range(
-                            entry.paddr + entry.filez,
-                            entry.vaddr + entry.filez,
-                            entry.memsz - entry.filez,
+                            segment.p_paddr + segment.p_filesz,
+                            segment.p_vaddr + segment.p_filesz,
+                            segment.p_memsz - segment.p_filesz,
                             true,
                         )?;
                     }
