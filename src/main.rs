@@ -65,6 +65,17 @@ struct Opts {
     output: Option<String>,
 }
 
+// allow user to pass hex formatted numbers (typically the format used by family ids)
+fn num_parser(s: &str) -> Result<u32, &'static str> {
+    match s.get(0..2) {
+        Some("0x") => u32::from_str_radix(&s[2..], 16).map_err(|_| "invalid hex number"),
+
+        Some("0b") => u32::from_str_radix(&s[2..], 2).map_err(|_| "invalid binary number"),
+
+        _ => s.parse::<u32>().map_err(|_| "invalid decimal number"),
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum Elf2Uf2Error {
     #[error("Failed to get address ranges from elf")]
@@ -171,6 +182,7 @@ fn write_output(
     elf_file: &mut ElfStream<AnyEndian, impl Read + Seek>,
     pages: &PageMap,
     mut output: impl Write,
+    family_id: u32,
 ) -> Result<(), Elf2Uf2Error> {
     let mut block_header = Uf2BlockHeader {
         magic_start0: UF2_MAGIC_START0,
@@ -224,10 +236,14 @@ fn open_elf<T: Read + Seek>(input: T) -> Result<ElfStream<AnyEndian, T>, Elf2Uf2
 }
 
 #[cfg_attr(not(test), expect(unused))]
-fn elf2uf2(input: impl Read + Seek, output: impl Write) -> Result<(), Elf2Uf2Error> {
+fn elf2uf2(
+    input: impl Read + Seek,
+    output: impl Write,
+    family_id: u32,
+) -> Result<(), Elf2Uf2Error> {
     let mut elf = open_elf(input)?;
     let pages = build_page_map(&elf)?;
-    write_output(&mut elf, &pages, output)
+    write_output(&mut elf, &pages, output, family_id)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -284,6 +300,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         (File::create(&output_path)?, output_path)
     };
 
+    let family_id = options.family;
+
+    if options.verbose {
+        println!("Using UF2 Family ID 0x{:x}", family_id);
+    }
+
     let writer = BufWriter::new(output);
     let mut elf = open_elf(input)?;
     let should_print_progress = log::max_level() >= LevelFilter::Info;
@@ -292,11 +314,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let result = if should_print_progress {
         let len = pages.len() as u64 * 512;
         let mut reporter = ProgressBarReporter::new(len, writer);
-        let result = write_output(&mut elf, &pages, &mut reporter);
+        let result = write_output(&mut elf, &pages, &mut reporter, family_id);
         reporter.finish();
         result
     } else {
-        write_output(&mut elf, &pages, writer)
+        write_output(&mut elf, &pages, writer, family_id)
     };
 
     if let Err(err) = result {
