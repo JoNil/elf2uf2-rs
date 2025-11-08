@@ -1,5 +1,9 @@
-use crate::address_range::{
-    self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
+use crate::{
+    address_range::{
+        self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
+        RP2350_ADDRESS_RANGES_FLASH, RP2350_ADDRESS_RANGES_RAM,
+    },
+    Family,
 };
 use assert_into::AssertInto;
 use elf::{abi::PT_LOAD, endian::EndianParse, segment::ProgramHeader, ElfStream, ParseError};
@@ -17,8 +21,20 @@ pub const PAGE_SIZE: u64 = 1 << LOG2_PAGE_SIZE;
 pub type PageMap = BTreeMap<u64, Vec<PageFragment>>;
 
 // "determine_binary_type"
-pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(file: &ElfStream<E, S>) -> Option<bool> {
+pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(
+    file: &ElfStream<E, S>,
+    family: Family,
+) -> Option<bool> {
     let entry = file.ehdr.e_entry;
+
+    let (address_ranges_ram, address_ranges_flash) = match family {
+        Family::RP2040 => (RP2040_ADDRESS_RANGES_RAM, RP2040_ADDRESS_RANGES_FLASH),
+        Family::RP2XXX_ABSOLUTE
+        | Family::RP2XXX_DATA
+        | Family::RP2350_ARM_S
+        | Family::RP2350_RISCV
+        | Family::RP2350_ARM_NS => (RP2350_ADDRESS_RANGES_RAM, RP2350_ADDRESS_RANGES_FLASH),
+    };
 
     for segment in file.segments() {
         if segment.p_type == PT_LOAD && segment.p_memsz > 0 {
@@ -28,9 +44,9 @@ pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(file: &ElfStream<E, S>) -> 
                 // so call THAT a flash binary
                 if entry >= segment.p_vaddr && entry < segment.p_vaddr + mapped_size {
                     let effective_entry = entry + segment.p_paddr - segment.p_vaddr;
-                    if RP2040_ADDRESS_RANGES_RAM.is_address_initialized(effective_entry) {
+                    if address_ranges_ram.is_address_initialized(effective_entry) {
                         return Some(true);
-                    } else if RP2040_ADDRESS_RANGES_FLASH.is_address_initialized(effective_entry) {
+                    } else if address_ranges_flash.is_address_initialized(effective_entry) {
                         return Some(false);
                     }
                 }
