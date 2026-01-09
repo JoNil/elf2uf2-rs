@@ -1,51 +1,51 @@
 name: CI
 on:
-  merge_group:
-  pull_request:
-  push:
-    branches:
-      - master
+    merge_group:
+    pull_request:
+    push:
+        branches:
+            - master
 
 jobs:
-  clippy:
-    name: cargo clippy
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    clippy:
+        name: cargo clippy
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y libudev-dev
+            - name: Install dependencies
+              run: |
+                  sudo apt update
+                  sudo apt install -y libudev-dev
 
-      - name: Cargo clippy
-        run: |
-          # rust-toolchain pins toolchain, so -Dwarnings will not introduce new errors until
-          # toolchain is bumped.
-          cargo clippy -- -Dwarnings
+            - name: Cargo clippy
+              run: |
+                  # rust-toolchain pins toolchain, so -Dwarnings will not introduce new errors until
+                  # toolchain is bumped.
+                  cargo clippy -- -Dwarnings
 
-  test:
-    name: cargo test
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    test:
+        name: cargo test
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y libudev-dev
+            - name: Install dependencies
+              run: |
+                  sudo apt update
+                  sudo apt install -y libudev-dev
 
-      - name: Cargo test
-        run: cargo test
+            - name: Cargo test
+              run: cargo test --workspace
 
-  fmt:
-    name: cargo fmt
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    fmt:
+        name: cargo fmt
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
 
-      - name: Cargo fmt
-        run: cargo fmt --check
+            - name: Cargo fmt
+              run: cargo fmt --check
