@@ -217,6 +217,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55dd888a213fc57e957abf2aa305ee3e8a28dbe05687a251f33b637cd46b0070"
 
 [[package]]
+name = "elf2uf2-core"
+version = "2.2.0"
+dependencies = [
+ "assert_into",
+ "clap",
+ "ctrlc",
+ "elf",
+ "env_logger",
+ "log",
+ "pbr",
+ "serialport",
+ "static_assertions",
+ "sysinfo",
+ "thiserror",
+ "zerocopy",
+]
+
+[[package]]
 name = "elf2uf2-rs"
 version = "2.2.0"
 dependencies = [
@@ -224,6 +242,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "elf",
+ "elf2uf2-core",
  "env_logger",
  "log",
  "pbr",

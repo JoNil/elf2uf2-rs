@@ -1,0 +1,29 @@
+[package]
+name = "elf2uf2-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+description = "The core library behind elf2uf2-rs"
+documentation = "https://docs.rs/elf2uf2-core"
+
+[dependencies]
+assert_into = { workspace = true }
+clap = { workspace = true }
+pbr = { workspace = true }
+serialport = { workspace = true, optional = true }
+static_assertions = { workspace = true }
+sysinfo = { workspace = true }
+zerocopy = { workspace = true }
+ctrlc = { workspace = true }
+elf = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+
+[features]
+default = ["serial"]
+serial = ["serialport"]
