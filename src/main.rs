@@ -476,19 +476,19 @@ mod tests {
 
     #[test]
     pub fn hello_usb() {
-        let bytes_in = io::Cursor::new(&include_bytes!("../hello_usb.elf")[..]);
+        let bytes_in = io::Cursor::new(&include_bytes!("./tests/rp2040/hello_usb.elf")[..]);
         let mut bytes_out = Vec::new();
         elf2uf2(bytes_in, &mut bytes_out, Family::RP2040).unwrap();
 
-        assert_eq!(bytes_out, include_bytes!("../hello_usb.uf2"));
+        assert_eq!(bytes_out, include_bytes!("./tests/rp2040/hello_usb.uf2"));
     }
 
     #[test]
     pub fn hello_serial() {
-        let bytes_in = io::Cursor::new(&include_bytes!("../hello_serial.elf")[..]);
+        let bytes_in = io::Cursor::new(&include_bytes!("./tests/rp2040/hello_serial.elf")[..]);
         let mut bytes_out = Vec::new();
         elf2uf2(bytes_in, &mut bytes_out, Family::RP2040).unwrap();
 
-        assert_eq!(bytes_out, include_bytes!("../hello_serial.uf2"));
+        assert_eq!(bytes_out, include_bytes!("./tests/rp2040/hello_serial.uf2"));
     }
 }
