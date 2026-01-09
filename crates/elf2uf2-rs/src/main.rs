@@ -1,5 +1,5 @@
 use clap::Parser;
-use elf2uf2_core::{build_page_map, open_elf, reporter::ProgressBarReporter, write_output, Family};
+use elf2uf2_core::{build_page_map, open_elf, write_output, Family};
 use env_logger::Env;
 use log::*;
 use sysinfo::Disks;
@@ -9,6 +9,10 @@ use std::{
     io::{BufReader, BufWriter, Write},
     path::Path,
 };
+
+use crate::reporter::ProgressBarReporter;
+
+mod reporter;
 
 #[derive(Parser, Debug, Default)]
 #[clap(author = "Jonathan Nilsson")]

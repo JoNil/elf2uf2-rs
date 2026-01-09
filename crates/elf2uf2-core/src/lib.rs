@@ -28,7 +28,6 @@ use zerocopy::IntoBytes;
 
 pub mod address_range;
 pub mod elf;
-pub mod reporter;
 pub mod uf2;
 
 // See https://github.com/microsoft/uf2/blob/master/utils/uf2families.json for list
