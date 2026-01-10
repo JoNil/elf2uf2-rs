@@ -217,21 +217,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55dd888a213fc57e957abf2aa305ee3e8a28dbe05687a251f33b637cd46b0070"
 
 [[package]]
-name = "elf2uf2-rs"
+name = "elf2uf2-core"
 version = "2.2.0"
 dependencies = [
  "assert_into",
  "clap",
- "ctrlc",
  "elf",
+ "log",
+ "static_assertions",
+ "thiserror",
+ "zerocopy",
+]
+
+[[package]]
+name = "elf2uf2-rs"
+version = "2.2.0"
+dependencies = [
+ "clap",
+ "ctrlc",
+ "elf2uf2-core",
  "env_logger",
  "log",
  "pbr",
  "serialport",
- "static_assertions",
  "sysinfo",
- "thiserror",
- "zerocopy",
 ]
 
 [[package]]
@@ -375,9 +384,9 @@ dependencies = [
 
 [[package]]
 name = "ntapi"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8a3895c6391c39d7fe7ebc444a87eb2991b2a0bc718fdabd071eec617fc68e4"
+checksum = "c70f219e21142367c70c0b30c6a9e3a14d55b4d12a204d897fbec83a0363f081"
 dependencies = [
  "winapi",
 ]
