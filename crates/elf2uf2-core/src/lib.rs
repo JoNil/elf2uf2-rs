@@ -21,7 +21,6 @@ use std::{
 
 use ::elf::{endian::AnyEndian, ElfStream, ParseError};
 use assert_into::AssertInto;
-use clap::ValueEnum;
 use log::*;
 use thiserror::Error;
 use zerocopy::IntoBytes;
@@ -31,8 +30,9 @@ pub mod elf;
 pub mod uf2;
 
 // See https://github.com/microsoft/uf2/blob/master/utils/uf2families.json for list
-#[derive(Debug, ValueEnum, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[repr(u32)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[allow(non_camel_case_types)]
 pub enum Family {
     /// Raspberry Pi RP2040

@@ -11,7 +11,7 @@ description = "Port of elf2uf2 to rust"
 documentation = "https://docs.rs/elf2uf2-rs"
 
 [dependencies]
-elf2uf2-core = { version = "2.2.0", path = "../elf2uf2-core" }
+elf2uf2-core = { version = "2.2.0", path = "../elf2uf2-core", features = [ "clap" ] }
 
 clap = { workspace = true }
 pbr = { workspace = true }

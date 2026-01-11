@@ -12,7 +12,7 @@ documentation = "https://docs.rs/elf2uf2-core"
 
 [dependencies]
 assert_into = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, optional = true }
 static_assertions = { workspace = true }
 zerocopy = { workspace = true }
 elf = { workspace = true }
