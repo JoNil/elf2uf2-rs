@@ -108,16 +108,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             output,
             family,
-        } => {
-            return convert(&input, &output, family);
-        }
+        } => convert(&input, &output, family),
         Command::Deploy {
             input,
             family,
             serial,
             term,
-        } => {
-            return deploy(&input, family, serial, term);
-        }
+        } => deploy(&input, family, serial, term),
     }
 }
