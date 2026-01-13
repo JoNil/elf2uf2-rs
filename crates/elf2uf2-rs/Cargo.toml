@@ -7,7 +7,7 @@ readme.workspace = true
 authors.workspace = true
 repository.workspace = true
 
-description = "Port of elf2uf2 to rust"
+description = "A tool to help flash elf files to microcontrollers"
 documentation = "https://docs.rs/elf2uf2-rs"
 
 [dependencies]

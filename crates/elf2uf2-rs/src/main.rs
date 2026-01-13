@@ -14,6 +14,7 @@ mod reporter;
 #[derive(Parser, Debug)]
 enum Command {
     /// Convert ELF to UF2 file on disk
+    #[command(arg_required_else_help = true)]
     Convert {
         /// Input ELF file
         input: String,
@@ -26,6 +27,7 @@ enum Command {
         family: Family,
     },
     /// Deploy ELF directly to a connected board
+    #[command(arg_required_else_help = true)]
     Deploy {
         /// Input ELF file
         input: String,
