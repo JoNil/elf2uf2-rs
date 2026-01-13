@@ -1,3 +1,7 @@
+use std::io::{Read, Seek};
+
+use elf::{ElfStream, abi::PT_LOAD, endian::EndianParse};
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AddressRangeType {
     /// May have contents
@@ -31,85 +35,39 @@ impl Default for AddressRange {
     }
 }
 
-pub const FLASH_SECTOR_ERASE_SIZE: u64 = 4096;
-pub const MAIN_RAM_START_RP2040: u64 = 0x20000000;
-pub const MAIN_RAM_END_RP2040: u64 = 0x20042000;
-pub const MAIN_RAM_START_RP2350: u64 = 0x20000000;
-pub const MAIN_RAM_END_RP2350: u64 = 0x20082000;
-pub const FLASH_START_RP2040: u64 = 0x10000000;
-pub const FLASH_END_RP2040: u64 = 0x15000000;
-// From RP2350 datasheet:
-// RP2040 required images to be stored at the beginning of flash (0x10000000). RP2350 supports storing executable images
-// in a partitions at arbitrary locations, to support more robust upgrade cycles via A/B versions, among other uses.
-// Therefore, the values below are possibly incorrect but FLASH_END_RP2040 appears to be incorrect too
-pub const FLASH_START_RP2350: u64 = 0x10000000;
-pub const FLASH_END_RP2350: u64 = 0x15000000;
-pub const XIP_SRAM_START_RP2040: u64 = 0x15000000;
-pub const XIP_SRAM_END_RP2040: u64 = 0x15004000;
-pub const XIP_SRAM_START_RP2350: u64 = 0x13ffc000;
-pub const XIP_SRAM_END_RP2350: u64 = 0x14000000;
-pub const MAIN_RAM_BANKED_START_RP2040: u64 = 0x21000000;
-pub const MAIN_RAM_BANKED_END_RP2040: u64 = 0x21040000;
-pub const ROM_START_RP2040: u64 = 0x00000000;
-pub const ROM_END_RP2040: u64 = 0x00004000;
-pub const ROM_START_RP2350: u64 = 0x00000000;
-pub const ROM_END_RP2350: u64 = 0x00008000;
+pub fn address_ranges_from_elf<E: EndianParse, S: Read + Seek>(
+    file: &ElfStream<E, S>,
+) -> Vec<AddressRange> {
+    let segments = file.segments();
 
-pub const RP2040_ADDRESS_RANGES_FLASH: &[AddressRange] = &[
-    AddressRange::new(
-        FLASH_START_RP2040,
-        FLASH_END_RP2040,
-        AddressRangeType::Contents,
-    ),
-    AddressRange::new(
-        MAIN_RAM_START_RP2040,
-        MAIN_RAM_END_RP2040,
-        AddressRangeType::NoContents,
-    ),
-    AddressRange::new(
-        MAIN_RAM_BANKED_START_RP2040,
-        MAIN_RAM_BANKED_END_RP2040,
-        AddressRangeType::NoContents,
-    ),
-];
+    let mut ranges = Vec::new();
 
-pub const RP2040_ADDRESS_RANGES_RAM: &[AddressRange] = &[
-    AddressRange::new(
-        MAIN_RAM_START_RP2040,
-        MAIN_RAM_END_RP2040,
-        AddressRangeType::Contents,
-    ),
-    AddressRange::new(
-        XIP_SRAM_START_RP2040,
-        XIP_SRAM_END_RP2040,
-        AddressRangeType::Contents,
-    ),
-    AddressRange::new(ROM_START_RP2040, ROM_END_RP2040, AddressRangeType::Ignore), // for now we ignore the bootrom if present
-];
+    for seg in segments {
+        if seg.p_type != PT_LOAD || seg.p_memsz == 0 {
+            continue;
+        }
 
-pub const RP2350_ADDRESS_RANGES_FLASH: &[AddressRange] = &[
-    AddressRange::new(
-        FLASH_START_RP2350,
-        FLASH_END_RP2350,
-        AddressRangeType::Contents,
-    ),
-    AddressRange::new(
-        MAIN_RAM_START_RP2350,
-        MAIN_RAM_END_RP2350,
-        AddressRangeType::NoContents,
-    ),
-];
+        let start = seg.p_paddr;
+        let end = start + seg.p_memsz;
 
-pub const RP2350_ADDRESS_RANGES_RAM: &[AddressRange] = &[
-    AddressRange::new(
-        MAIN_RAM_START_RP2350,
-        MAIN_RAM_END_RP2350,
-        AddressRangeType::Contents,
-    ),
-    AddressRange::new(
-        XIP_SRAM_START_RP2350,
-        XIP_SRAM_END_RP2350,
-        AddressRangeType::Contents,
-    ),
-    AddressRange::new(ROM_START_RP2350, ROM_END_RP2350, AddressRangeType::Ignore), // for now we ignore the bootrom if present
-];
+        if seg.p_filesz > 0 {
+            // initialized contents
+            ranges.push(AddressRange::new(
+                start,
+                start + seg.p_filesz,
+                AddressRangeType::Contents,
+            ));
+        }
+
+        if seg.p_memsz > seg.p_filesz {
+            // uninitialized (BSS)
+            ranges.push(AddressRange::new(
+                start + seg.p_filesz,
+                end,
+                AddressRangeType::NoContents,
+            ));
+        }
+    }
+
+    ranges
+}
