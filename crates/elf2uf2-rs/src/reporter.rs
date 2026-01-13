@@ -12,7 +12,6 @@ where
     T: std::io::Write,
 {
     pub fn new(total_bytes: u64, inner: T) -> Self {
-        log::info!("Transfering program to pico");
         let mut pb = ProgressBar::new(total_bytes);
         pb.set_units(Units::Bytes);
 
