@@ -53,6 +53,7 @@ pub fn deploy<P: AsRef<Path>>(
 
     let result = if should_print_progress {
         let len = pages.len() as u64 * 512;
+        log::info!("Transfering program to microcontroller");
         let mut reporter = ProgressBarReporter::new(len, writer);
         let result = write_output(&mut elf, &pages, &mut reporter, family);
         reporter.finish();

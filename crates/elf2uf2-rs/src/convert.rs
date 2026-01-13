@@ -30,6 +30,7 @@ pub fn convert<P1: AsRef<Path>, P2: AsRef<Path>>(
 
     let result = if should_print_progress {
         let len = pages.len() as u64 * 512;
+        log::info!("Writing program to disk");
         let mut reporter = ProgressBarReporter::new(len, writer);
         let result = write_output(&mut elf, &pages, &mut reporter, family);
         reporter.finish();
