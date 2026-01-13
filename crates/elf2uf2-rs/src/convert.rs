@@ -1,0 +1,49 @@
+use std::{
+    fs::{self, File},
+    io::{BufReader, BufWriter},
+    path::Path,
+};
+
+use elf2uf2_core::{build_page_map, open_elf, write_output, Family};
+use log::{info, LevelFilter};
+
+use crate::reporter::ProgressBarReporter;
+
+pub fn convert<P1: AsRef<Path>, P2: AsRef<Path>>(
+    input_path: &P1,
+    output_path: &P2,
+    family: Family,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let input = input_path.as_ref();
+    let output_path = output_path.as_ref().with_extension("uf2");
+
+    let input = BufReader::new(File::open(input)?);
+
+    let output = File::create(&output_path)?;
+
+    info!("Using UF2 Family {:?}", family);
+
+    let writer = BufWriter::new(output);
+    let mut elf = open_elf(input)?;
+    let should_print_progress = log::max_level() >= LevelFilter::Info;
+    let pages = build_page_map(&elf, family)?;
+
+    let result = if should_print_progress {
+        let len = pages.len() as u64 * 512;
+        let mut reporter = ProgressBarReporter::new(len, writer);
+        let result = write_output(&mut elf, &pages, &mut reporter, family);
+        reporter.finish();
+        result
+    } else {
+        write_output(&mut elf, &pages, writer, family)
+    };
+
+    if let Err(err) = result {
+        fs::remove_file(output_path)?;
+        return Err(Box::new(err));
+    }
+
+    println!();
+
+    Ok(())
+}
