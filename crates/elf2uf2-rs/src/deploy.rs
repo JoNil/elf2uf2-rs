@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::{
     fs::{self, File},
-    io::{BufReader, BufWriter},
+    io::BufReader,
     path::Path,
 };
 
@@ -46,7 +46,6 @@ pub fn deploy<P: AsRef<Path>>(
 
     info!("Using UF2 Family {:?}", family);
 
-    let writer = BufWriter::new(output);
     let mut elf = open_elf(input)?;
     let should_print_progress = log::max_level() >= LevelFilter::Info;
     let pages = build_page_map(&elf, family)?;
@@ -54,12 +53,12 @@ pub fn deploy<P: AsRef<Path>>(
     let result = if should_print_progress {
         let len = pages.len() as u64 * 512;
         log::info!("Transfering program to microcontroller");
-        let mut reporter = ProgressBarReporter::new(len, writer);
+        let mut reporter = ProgressBarReporter::new(len, output);
         let result = write_output(&mut elf, &pages, &mut reporter, family);
         reporter.finish();
         result
     } else {
-        write_output(&mut elf, &pages, writer, family)
+        write_output(&mut elf, &pages, output, family)
     };
 
     if let Err(err) = result {
