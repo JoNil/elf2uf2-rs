@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use elf2uf2_core::Family;
+use elf2uf2_core::boards::BoardIter;
 use env_logger::Env;
 use log::*;
 
@@ -22,9 +22,9 @@ enum Command {
         /// Output UF2 file
         output: String,
 
-        /// Select family short name for UF2
-        #[clap(value_enum, short, long, default_value_t = Family::default())]
-        family: Family,
+        /// Explicit board (rp2040, rp2350, circuit_playground_bluefruit, etc.)
+        #[clap(short, long, value_parser = board_parser)]
+        board: String,
     },
     /// Deploy ELF directly to a connected board
     #[command(arg_required_else_help = true)]
@@ -32,9 +32,9 @@ enum Command {
         /// Input ELF file
         input: String,
 
-        /// Select family short name for UF2
-        #[clap(value_enum, short, long, default_value_t = Family::default())]
-        family: Family,
+        /// Explicit board (rp2040, rp2350, circuit_playground_bluefruit, etc.)
+        #[clap(short, long, value_parser = board_parser)]
+        board: String,
 
         /// Connect to serial after deploy
         #[cfg(feature = "serial")]
@@ -46,6 +46,14 @@ enum Command {
         #[clap(short, long)]
         term: bool,
     },
+}
+
+fn board_parser(s: &str) -> Result<String, String> {
+    if let Some(board) = BoardIter::find_by_name(s) {
+        Ok(board.board_name().to_string())
+    } else {
+        Err(format!("Unknown board '{}'", s))
+    }
 }
 
 #[derive(Parser, Debug, Default)]
@@ -109,13 +117,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Convert {
             input,
             output,
-            family,
-        } => convert(&input, &output, family),
+            board,
+        } => {
+            let board = BoardIter::find_by_name(&board)
+                .expect("This already has been verified by board_parser");
+
+            convert(&input, &output, board.as_ref())
+        }
         Command::Deploy {
             input,
-            family,
+            board,
             serial,
             term,
-        } => deploy(&input, family, serial, term),
+        } => {
+            let board = BoardIter::find_by_name(&board)
+                .expect("This already has been verified by board_parser");
+
+            deploy(&input, board.as_ref(), serial, term)
+        }
     }
 }

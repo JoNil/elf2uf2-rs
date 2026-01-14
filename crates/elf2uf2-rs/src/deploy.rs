@@ -5,15 +5,16 @@ use std::{
     path::Path,
 };
 
-use elf2uf2_core::{build_page_map, open_elf, write_output, Family};
-use log::{info, LevelFilter};
+use elf2uf2_core::boards::BoardInfo;
+use elf2uf2_core::{build_page_map, open_elf, write_output};
+use log::{LevelFilter, info};
 use sysinfo::Disks;
 
 use crate::reporter::ProgressBarReporter;
 
 pub fn deploy<P: AsRef<Path>>(
     input_path: P,
-    family: Family,
+    board: &dyn BoardInfo,
     serial: bool,
     term: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -44,21 +45,21 @@ pub fn deploy<P: AsRef<Path>>(
         None => return Err("Unable to find mounted pico".into()),
     };
 
-    info!("Using UF2 Family {:?}", family);
+    info!("Using UF2 Family {:?}", board.family_id());
 
     let mut elf = open_elf(input)?;
     let should_print_progress = log::max_level() >= LevelFilter::Info;
-    let pages = build_page_map(&elf, family)?;
+    let pages = build_page_map(&elf, board)?;
 
     let result = if should_print_progress {
         let len = pages.len() as u64 * 512;
         log::info!("Transfering program to microcontroller");
         let mut reporter = ProgressBarReporter::new(len, output);
-        let result = write_output(&mut elf, &pages, &mut reporter, family);
+        let result = write_output(&mut elf, &pages, &mut reporter, board);
         reporter.finish();
         result
     } else {
-        write_output(&mut elf, &pages, output, family)
+        write_output(&mut elf, &pages, output, board)
     };
 
     if let Err(err) = result {

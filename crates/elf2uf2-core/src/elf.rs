@@ -1,12 +1,10 @@
 use crate::{
-    address_range::{
-        self, AddressRange, RP2040_ADDRESS_RANGES_FLASH, RP2040_ADDRESS_RANGES_RAM,
-        RP2350_ADDRESS_RANGES_FLASH, RP2350_ADDRESS_RANGES_RAM,
-    },
-    Family,
+    Elf2Uf2Error,
+    address_range::{self, AddressRange, address_ranges_from_elf},
+    boards::{AddressLocations, BoardInfo},
 };
 use assert_into::AssertInto;
-use elf::{abi::PT_LOAD, endian::EndianParse, segment::ProgramHeader, ElfStream, ParseError};
+use elf::{ElfStream, ParseError, abi::PT_LOAD, endian::EndianParse, segment::ProgramHeader};
 use log::debug;
 use std::{
     cmp::min,
@@ -23,17 +21,27 @@ pub type PageMap = BTreeMap<u64, Vec<PageFragment>>;
 // "determine_binary_type"
 pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(
     file: &ElfStream<E, S>,
-    family: Family,
-) -> Option<bool> {
+    board: &dyn BoardInfo,
+) -> Result<Option<bool>, Elf2Uf2Error> {
     let entry = file.ehdr.e_entry;
 
-    let (address_ranges_ram, address_ranges_flash) = match family {
-        Family::RP2040 => (RP2040_ADDRESS_RANGES_RAM, RP2040_ADDRESS_RANGES_FLASH),
-        Family::RP2XXX_ABSOLUTE
-        | Family::RP2XXX_DATA
-        | Family::RP2350_ARM_S
-        | Family::RP2350_RISCV
-        | Family::RP2350_ARM_NS => (RP2350_ADDRESS_RANGES_RAM, RP2350_ADDRESS_RANGES_FLASH),
+    let (address_ranges_ram, address_ranges_flash) = match board.address_locations() {
+        AddressLocations {
+            address_ranges_ram: Some(address_ranges_ram),
+            address_ranges_flash: Some(address_ranges_flash),
+            main_ram_start: _,
+            main_ram_end: _,
+            xip_sram_start: _,
+            xip_sram_end: _,
+        } => (address_ranges_ram, address_ranges_flash),
+        AddressLocations {
+            address_ranges_ram: _,
+            address_ranges_flash: _,
+            main_ram_start: _,
+            main_ram_end: _,
+            xip_sram_start: _,
+            xip_sram_end: _,
+        } => return Ok(None),
     };
 
     for segment in file.segments() {
@@ -45,16 +53,16 @@ pub fn is_ram_binary<E: EndianParse, S: Read + Seek>(
                 if entry >= segment.p_vaddr && entry < segment.p_vaddr + mapped_size {
                     let effective_entry = entry + segment.p_paddr - segment.p_vaddr;
                     if address_ranges_ram.is_address_initialized(effective_entry) {
-                        return Some(true);
+                        return Ok(Some(true));
                     } else if address_ranges_flash.is_address_initialized(effective_entry) {
-                        return Some(false);
+                        return Ok(Some(false));
                     }
                 }
             }
         }
     }
 
-    None
+    Err(Elf2Uf2Error::EntryPointNotMapped)
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -150,75 +158,84 @@ pub trait AddressRangesExt<'a>: IntoIterator<Item = &'a AddressRange> + Clone {
             addr + size,
         ))
     }
+}
 
-    fn check_elf32_ph_entries<E: EndianParse, S: Read + Seek>(
-        &self,
-        file: &ElfStream<E, S>,
-    ) -> Result<PageMap, AddressRangesFromElfError> {
-        let mut pages = PageMap::new();
+pub fn get_page_fragments<E: EndianParse, S: Read + Seek>(
+    file: &ElfStream<E, S>,
+    page_size: u32,
+    address_range: Option<&[AddressRange]>,
+) -> Result<PageMap, AddressRangesFromElfError> {
+    let mut pages = PageMap::new();
 
-        for segment in file.segments() {
-            if segment.p_type == PT_LOAD && segment.p_memsz > 0 {
-                let mapped_size = min(segment.p_filesz, segment.p_memsz);
+    let elf_ranges = address_ranges_from_elf(&file);
 
-                if mapped_size > 0 {
-                    let ar = self.check_address_range(
-                        segment.p_paddr,
-                        segment.p_vaddr,
-                        mapped_size,
-                        false,
-                    )?;
+    // We fallback to these ranges if address_range is not provided
+    let ranges = match address_range {
+        Some(range) => range,
+        None => elf_ranges.as_slice(),
+    };
 
-                    // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
-                    if ar.typ != address_range::AddressRangeType::Contents {
-                        debug!("ignored");
-                        continue;
-                    }
-                    let mut addr = segment.p_paddr;
-                    let mut remaining = mapped_size;
-                    let mut file_offset = segment.p_offset;
-                    while remaining > 0 {
-                        let off = addr & (PAGE_SIZE - 1);
-                        let len = min(remaining, PAGE_SIZE - off);
+    for segment in file.segments() {
+        if segment.p_type == PT_LOAD && segment.p_memsz > 0 {
+            let mapped_size = min(segment.p_filesz, segment.p_memsz);
 
-                        // list of fragments
-                        let fragments = pages.entry(addr - off).or_default();
+            if mapped_size > 0 {
+                let ar = ranges.check_address_range(
+                    segment.p_paddr,
+                    segment.p_vaddr,
+                    mapped_size,
+                    false,
+                )?;
 
-                        // note if filesz is zero, we want zero init which is handled because the
-                        // statement above creates an empty page fragment list
-                        // check overlap with any existing fragments
-                        for fragment in fragments.iter() {
-                            if (off < fragment.page_offset + fragment.bytes)
-                                != ((off + len) <= fragment.page_offset)
-                            {
-                                return Err(AddressRangesFromElfError::SegmentsOverlap);
-                            }
+                // we don't download uninitialized, generally it is BSS and should be zero-ed by crt0.S, or it may be COPY areas which are undefined
+                if ar.typ != address_range::AddressRangeType::Contents {
+                    debug!("ignored");
+                    continue;
+                }
+                let mut addr = segment.p_paddr;
+                let mut remaining = mapped_size;
+                let mut file_offset = segment.p_offset;
+                while remaining > 0 {
+                    let off = addr & (page_size - 1) as u64;
+                    let len = min(remaining, page_size as u64 - off);
+
+                    // list of fragments
+                    let fragments = pages.entry(addr - off).or_default();
+
+                    // note if filesz is zero, we want zero init which is handled because the
+                    // statement above creates an empty page fragment list
+                    // check overlap with any existing fragments
+                    for fragment in fragments.iter() {
+                        if (off < fragment.page_offset + fragment.bytes)
+                            != ((off + len) <= fragment.page_offset)
+                        {
+                            return Err(AddressRangesFromElfError::SegmentsOverlap);
                         }
-                        fragments.push(PageFragment {
-                            segment: *segment,
-                            file_offset,
-                            page_offset: off,
-                            bytes: len,
-                        });
-                        addr += len;
-                        file_offset += len;
-                        remaining -= len;
                     }
-                    if segment.p_memsz > segment.p_filesz {
-                        // we have some uninitialized data too
-                        self.check_address_range(
-                            segment.p_paddr + segment.p_filesz,
-                            segment.p_vaddr + segment.p_filesz,
-                            segment.p_memsz - segment.p_filesz,
-                            true,
-                        )?;
-                    }
+                    fragments.push(PageFragment {
+                        segment: *segment,
+                        file_offset,
+                        page_offset: off,
+                        bytes: len,
+                    });
+                    addr += len;
+                    file_offset += len;
+                    remaining -= len;
+                }
+                if segment.p_memsz > segment.p_filesz {
+                    // we have some uninitialized data too
+                    ranges.check_address_range(
+                        segment.p_paddr + segment.p_filesz,
+                        segment.p_vaddr + segment.p_filesz,
+                        segment.p_memsz - segment.p_filesz,
+                        true,
+                    )?;
                 }
             }
         }
-
-        Ok(pages)
     }
+
+    Ok(pages)
 }
 
 impl<'a, T> AddressRangesExt<'a> for T where T: IntoIterator<Item = &'a AddressRange> + Clone {}

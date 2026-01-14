@@ -7,7 +7,7 @@ default-members = ["crates/elf2uf2-rs"]
 [workspace.package]
 version = "2.2.0"
 authors = ["Jonathan Nilsson <jonathan@voysys.se>"]
-edition = "2021"
+edition = "2024"
 readme = "README.md"
 license = "0BSD"
 repository = "https://github.com/JoNil/elf2uf2-rs"
@@ -25,3 +25,4 @@ elf = "0.8"
 thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
+nusb = "0.2"
