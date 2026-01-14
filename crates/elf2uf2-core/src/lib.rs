@@ -117,8 +117,8 @@ pub fn open_elf<T: Read + Seek>(input: T) -> Result<ElfStream<AnyEndian, T>, Elf
     ElfStream::<AnyEndian, _>::open_stream(input).map_err(Elf2Uf2Error::FailedToOpenElfFile)
 }
 
-#[cfg_attr(not(test), expect(unused))]
-fn elf2uf2(
+/// Converts a elf file into a uf2 file.
+pub fn elf2uf2(
     input: impl Read + Seek,
     output: impl Write,
     family: Family,
