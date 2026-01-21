@@ -167,7 +167,7 @@ pub fn get_page_fragments<E: EndianParse, S: Read + Seek>(
 ) -> Result<PageMap, AddressRangesFromElfError> {
     let mut pages = PageMap::new();
 
-    let elf_ranges = address_ranges_from_elf(&file);
+    let elf_ranges = address_ranges_from_elf(file);
 
     // We fallback to these ranges if address_range is not provided
     let ranges = match address_range {

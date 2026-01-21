@@ -7,6 +7,7 @@ pub mod rp2040;
 pub mod rp2350;
 
 /// This is a helper struct, which allows you to iterate over every board defined
+#[derive(Default)]
 pub struct BoardIter {
     inner: std::vec::IntoIter<Box<dyn BoardInfo>>,
 }
@@ -15,21 +16,14 @@ impl BoardIter {
     /// Creates a new BoardIter
     pub fn new() -> Self {
         Self {
-            inner: vec![
-                Box::new(RP2040::default()) as Box<dyn BoardInfo>,
-                Box::new(RP2350::default()),
-            ]
-            .into_iter(),
+            inner: vec![Box::new(RP2040) as Box<dyn BoardInfo>, Box::new(RP2350)].into_iter(),
         }
     }
 
     pub fn find_by_name(name: &str) -> Option<Box<dyn BoardInfo>> {
-        for board in Self::new() {
-            if board.board_name().eq_ignore_ascii_case(name) {
-                return Some(board);
-            }
-        }
-        None
+        Self::new()
+            .find(|board| board.board_name().eq_ignore_ascii_case(name))
+            .map(|v| v as _)
     }
 }
 
@@ -57,7 +51,7 @@ pub struct UsbDevice {
     pub version: UsbVersion,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AddressLocations<'a> {
     pub address_ranges_ram: Option<&'a [AddressRange]>,
     pub address_ranges_flash: Option<&'a [AddressRange]>,
@@ -65,19 +59,6 @@ pub struct AddressLocations<'a> {
     pub main_ram_end: Option<u64>,
     pub xip_sram_start: Option<u64>,
     pub xip_sram_end: Option<u64>,
-}
-
-impl<'a> Default for AddressLocations<'a> {
-    fn default() -> Self {
-        Self {
-            address_ranges_ram: None,
-            address_ranges_flash: None,
-            main_ram_start: None,
-            main_ram_end: None,
-            xip_sram_start: None,
-            xip_sram_end: None,
-        }
-    }
 }
 
 /// This trait helps by allowing for definitions of multiple different boards.

@@ -66,7 +66,7 @@ pub fn write_output(
         payload_size: board.page_size().assert_into(),
         block_no: 0,
         num_blocks: pages.len().assert_into(),
-        file_size: board.family_id() as u32,
+        file_size: board.family_id(),
     };
 
     let mut block_data: Uf2BlockData = [0; 476];
@@ -179,17 +179,9 @@ pub fn build_page_map(
     }
 
     let valid_ranges = if ram_style {
-        if let Some(address_ranges_ram) = address_locations.address_ranges_ram {
-            Some(address_ranges_ram)
-        } else {
-            None
-        }
+        address_locations.address_ranges_ram
     } else {
-        if let Some(address_ranges_flash) = address_locations.address_ranges_flash {
-            Some(address_ranges_flash)
-        } else {
-            None
-        }
+        address_locations.address_ranges_flash
     };
 
     let mut pages = get_page_fragments(elf, board.page_size(), valid_ranges)

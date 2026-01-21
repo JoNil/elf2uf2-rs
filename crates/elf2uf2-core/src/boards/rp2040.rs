@@ -11,7 +11,7 @@ impl BoardInfo for RP2040 {
         if device.vendor_id == 0x2e8a || device.product_id == 0x0003 {
             return true;
         }
-        return false;
+        false
     }
 
     fn family_id(&self) -> u32 {
