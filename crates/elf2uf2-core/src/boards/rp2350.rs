@@ -30,8 +30,8 @@ impl BoardInfo for RP2350 {
         }
     }
 
-    fn board_name(&self) -> String {
-        "rp2350".to_string()
+    fn board_name(&self) -> &'static str {
+        "rp2350"
     }
 }
 

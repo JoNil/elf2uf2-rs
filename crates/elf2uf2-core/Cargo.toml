@@ -21,5 +21,4 @@ zerocopy = { workspace = true }
 elf = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
-
 clap = { workspace = true, optional = true }

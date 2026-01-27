@@ -22,7 +22,7 @@ enum Command {
         /// Output UF2 file
         output: String,
 
-        /// Explicit board (rp2040, rp2350, circuit_playground_bluefruit, etc.)
+        /// Explicit board (rp2040, rp2350, etc.)
         #[clap(short, long, value_parser = board_parser)]
         board: String,
     },
@@ -32,7 +32,7 @@ enum Command {
         /// Input ELF file
         input: String,
 
-        /// Explicit board (rp2040, rp2350, circuit_playground_bluefruit, etc.)
+        /// Explicit board (rp2040, rp2350, etc.)
         #[clap(short, long, value_parser = board_parser)]
         board: String,
 

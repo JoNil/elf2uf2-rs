@@ -84,5 +84,5 @@ pub trait BoardInfo {
     }
 
     /// Get the board's name
-    fn board_name(&self) -> String;
+    fn board_name(&self) -> &'static str;
 }
