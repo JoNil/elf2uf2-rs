@@ -416,8 +416,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                                             } else if message_type == 4 {
                                                 const IMG_WIDTH: usize = 360;
                                                 const IMG_HEIGHT: usize = 287;
-                                                const BLOCKS_X: usize = IMG_WIDTH / 4;
-                                                const BLOCK_ROWS: usize = (IMG_HEIGHT + 3) / 4;
+                                                const HALF_W: usize = IMG_WIDTH / 2; // 180
+                                                const HALF_H: usize = (IMG_HEIGHT + 1) / 2; // 144
+                                                const BLOCKS_X: usize = HALF_W / 4; // 45
+                                                const BLOCK_ROWS: usize = HALF_H / 4; // 36
 
                                                 if buffer.len() == BLOCKS_X * BLOCK_ROWS * 6 {
                                                     let mut output =
@@ -442,14 +444,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                                                 max_val as u8,
                                                             ];
 
-                                                            let base_y = block_row * 4;
-                                                            let base_x = block_col * 4;
-
                                                             for dy in 0..4usize {
-                                                                let y = base_y + dy;
-                                                                if y >= IMG_HEIGHT {
-                                                                    break;
-                                                                }
                                                                 for dx in 0..4usize {
                                                                     let pi = dy * 4 + dx;
                                                                     let idx = ((buffer
@@ -457,10 +452,36 @@ fn main() -> Result<(), Box<dyn Error>> {
                                                                         >> ((pi & 3) << 1))
                                                                         & 0x03)
                                                                         as usize;
-                                                                    output[base_x
-                                                                        + dx
-                                                                        + y * IMG_WIDTH] =
-                                                                        palette[idx];
+                                                                    let val = palette[idx];
+
+                                                                    // Upscale 2x: each half-res pixel becomes 2x2
+                                                                    let hx =
+                                                                        block_col * 4 + dx;
+                                                                    let hy =
+                                                                        block_row * 4 + dy;
+                                                                    let ox = hx * 2;
+                                                                    let oy = hy * 2;
+
+                                                                    if oy < IMG_HEIGHT {
+                                                                        output[ox
+                                                                            + oy * IMG_WIDTH] =
+                                                                            val;
+                                                                        output[ox
+                                                                            + 1
+                                                                            + oy * IMG_WIDTH] =
+                                                                            val;
+                                                                    }
+                                                                    if oy + 1 < IMG_HEIGHT {
+                                                                        output[ox
+                                                                            + (oy + 1)
+                                                                                * IMG_WIDTH] =
+                                                                            val;
+                                                                        output[ox
+                                                                            + 1
+                                                                            + (oy + 1)
+                                                                                * IMG_WIDTH] =
+                                                                            val;
+                                                                    }
                                                                 }
                                                             }
                                                         }
