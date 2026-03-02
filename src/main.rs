@@ -413,6 +413,68 @@ fn main() -> Result<(), Box<dyn Error>> {
                                                     }
                                                     return Err("Viewer exited".into());
                                                 }
+                                            } else if message_type == 4 {
+                                                const IMG_WIDTH: usize = 360;
+                                                const IMG_HEIGHT: usize = 287;
+                                                const BLOCKS_X: usize = IMG_WIDTH / 4;
+                                                const BLOCK_ROWS: usize = (IMG_HEIGHT + 3) / 4;
+
+                                                if buffer.len() == BLOCKS_X * BLOCK_ROWS * 6 {
+                                                    let mut output =
+                                                        vec![0u8; IMG_WIDTH * IMG_HEIGHT];
+
+                                                    for block_row in 0..BLOCK_ROWS {
+                                                        for block_col in 0..BLOCKS_X {
+                                                            let src = (block_row * BLOCKS_X
+                                                                + block_col)
+                                                                * 6;
+                                                            let min_val = buffer[src] as u32;
+                                                            let max_val = buffer[src + 1] as u32;
+                                                            let range =
+                                                                max_val.wrapping_sub(min_val);
+
+                                                            let palette = [
+                                                                min_val as u8,
+                                                                (min_val + (range * 85 >> 8))
+                                                                    as u8,
+                                                                (min_val + (range * 171 >> 8))
+                                                                    as u8,
+                                                                max_val as u8,
+                                                            ];
+
+                                                            let base_y = block_row * 4;
+                                                            let base_x = block_col * 4;
+
+                                                            for dy in 0..4usize {
+                                                                let y = base_y + dy;
+                                                                if y >= IMG_HEIGHT {
+                                                                    break;
+                                                                }
+                                                                for dx in 0..4usize {
+                                                                    let pi = dy * 4 + dx;
+                                                                    let idx = ((buffer
+                                                                        [src + 2 + (pi >> 2)]
+                                                                        >> ((pi & 3) << 1))
+                                                                        & 0x03)
+                                                                        as usize;
+                                                                    output[base_x
+                                                                        + dx
+                                                                        + y * IMG_WIDTH] =
+                                                                        palette[idx];
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if let Err(TrySendError::Disconnected(_)) =
+                                                        viewer_tx.try_send(output)
+                                                    {
+                                                        if Opts::global().term {
+                                                            handler();
+                                                        }
+                                                        return Err("Viewer exited".into());
+                                                    }
+                                                }
                                             }
                                         }
                                     }
