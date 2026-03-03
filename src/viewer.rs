@@ -101,14 +101,24 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>) {
             }
 
             for feature in &fl {
-                let x = feature.x as usize;
-                let y = feature.y as usize;
+                let x = feature.x as i32;
+                let y = feature.y as i32;
 
-                if (0..WIDTH).contains(&x) && (0..HEIGHT).contains(&y) {
-                    if feature.val == -1 {
-                        buffer[x + y * WIDTH] = 0x00ff0000;
-                    } else {
-                        buffer[x + y * WIDTH] = 0x000000ff;
+                if feature.val == -1 {
+                    // Raw feature position: colored cross
+                    let color = 0x00ff0000; // red
+                    for d in -2i32..=2 {
+                        if x + d >= 0 && (x + d) < WIDTH as i32 && y >= 0 && y < HEIGHT as i32 {
+                            buffer[(x + d) as usize + y as usize * WIDTH] = color;
+                        }
+                        if x >= 0 && x < WIDTH as i32 && y + d >= 0 && (y + d) < HEIGHT as i32 {
+                            buffer[x as usize + (y + d) as usize * WIDTH] = color;
+                        }
+                    }
+                } else {
+                    // POI position: black dot
+                    if x >= 0 && x < WIDTH as i32 && y >= 0 && y < HEIGHT as i32 {
+                        buffer[x as usize + y as usize * WIDTH] = 0x00000000;
                     }
                 }
             }
