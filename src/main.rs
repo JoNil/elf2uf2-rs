@@ -276,7 +276,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // New line after progress bar
     println!();
 
-    let (viewer_tx, feature_tx) = viewer::run();
+    let (viewer_tx, feature_tx, orient_tx) = viewer::run();
 
     #[cfg(feature = "serial")]
     if Opts::global().serial {
@@ -412,6 +412,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                                                         handler();
                                                     }
                                                     return Err("Viewer exited".into());
+                                                }
+                                            } else if message_type == 5 {
+                                                if buffer.len() == 16 {
+                                                    let q = viewer::Quaternion {
+                                                        w: f32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]),
+                                                        x: f32::from_le_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]),
+                                                        y: f32::from_le_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]),
+                                                        z: f32::from_le_bytes([buffer[12], buffer[13], buffer[14], buffer[15]]),
+                                                    };
+                                                    orient_tx.try_send(q).ok();
                                                 }
                                             } else if message_type == 4 {
                                                 const IMG_WIDTH: usize = 360;
