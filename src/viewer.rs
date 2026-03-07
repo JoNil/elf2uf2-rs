@@ -169,11 +169,13 @@ pub fn run() -> (SyncSender<Vec<u8>>, SyncSender<Vec<Feature>>, SyncSender<Quate
                     let t1 = qw * qw - (qx * qx + qy * qy + qz * qz);
                     let rx = t1 * vx + t0 * qx + 2.0 * qw * (qy * vz - qz * vy);
                     let ry = t1 * vy + t0 * qy + 2.0 * qw * (qz * vx - qx * vz);
-                    let _rz = t1 * vz + t0 * qz + 2.0 * qw * (qx * vy - qy * vx);
+                    let rz = t1 * vz + t0 * qz + 2.0 * qw * (qx * vy - qy * vx);
 
-                    // Orthographic projection: use X and Y, ignore Z
-                    let ex = cx + (rx * axis_len) as i32;
-                    let ey = cy - (ry * axis_len) as i32;
+                    // Perspective projection: X=right, Y=forward(into screen), Z=up
+                    let d = 3.0f32;
+                    let scale = d / (d + ry);
+                    let ex = cx + (rx * axis_len * scale) as i32;
+                    let ey = cy - (rz * axis_len * scale) as i32;
 
                     // Draw line from (cx,cy) to (ex,ey) using Bresenham's
                     let dx = (ex - cx).abs();
